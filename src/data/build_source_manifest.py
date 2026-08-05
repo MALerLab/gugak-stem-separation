@@ -29,9 +29,18 @@ re-copy split/instrument/content columns, or they can drift per shift copy.
 `file_id` is a stable primary key derived from `dataset` + the source path relative to
 the dataset dir, so it survives a re-ingest or a re-cut split (it is NOT a row index).
 
+Versions
+--------
+The table is versioned by OUTPUT NAME, never by overwriting: `source_manifest` is v1
+(what exp001 trained against, kept as the historical record), `source_manifest_v2` is
+v1 minus the publisher defects declared in `configs/manifest_exclusions.yaml`. An
+experiment selects its version through `gugak_mix.source_manifest` in its YAML — no
+path is ever edited in code.
+
 Run:
     uv run python src/data/build_source_manifest.py [options]
       --taxonomy PATH   taxonomy yaml (default: configs/stem_taxonomy.yaml)
+      --exclusions PATH exclusion rules yaml (default: none -> v1, nothing dropped)
       --out BASE        output basename (default: manifests/source_manifest)
       --dry-run         build + report, write nothing
 """
@@ -181,6 +190,52 @@ def build(root: Path, taxonomy_path: Path) -> pd.DataFrame:
     return merged[[*lead, *[c for c in merged.columns if c not in lead]]]
 
 
+# ---------- exclusions ----------
+def apply_exclusions(frame: pd.DataFrame,
+                     exclusions_path: Path) -> tuple[pd.DataFrame, list[dict]]:
+    """Drop publisher-defective files declared in an exclusions yaml.
+
+    A rule targets one song of one dataset. With an `instruments` list it drops exactly
+    those stems; without one it drops the whole song, master included. Every rule must
+    match at least one row — a rule matching nothing means the song name or an instrument
+    name is wrong, and silently excluding nothing would leave the defect in the training
+    pool while the provenance record claims it was removed.
+
+    Args:
+        frame: the built source manifest, before exclusion.
+        exclusions_path: path to configs/manifest_exclusions.yaml.
+
+    Returns:
+        (frame without the excluded rows, one audit record per rule).
+    """
+    spec = yaml.safe_load(exclusions_path.read_text(encoding="utf-8"))
+    song_ids = frame["song_id"].map(nfc)
+    instruments = frame["instrument_canonical"].map(nfc)
+
+    drop_mask = pd.Series(False, index=frame.index)
+    audit: list[dict] = []
+    for rule in spec["exclusions"]:
+        matches = frame["dataset"].eq(str(rule["dataset"])) & song_ids.eq(nfc(rule["song_id"]))
+        wanted = rule.get("instruments")
+        if wanted is not None:
+            matches &= instruments.isin([nfc(name) for name in wanted])
+        if not matches.any():
+            raise ValueError(
+                f"exclusion rule matched no rows: song_id={rule['song_id']!r} "
+                f"instruments={wanted!r} — check the song name (NFC) against the manifest")
+        if wanted is not None and len(set(instruments[matches])) != len(set(wanted)):
+            found = sorted(set(instruments[matches]))
+            raise ValueError(
+                f"exclusion rule for {rule['song_id']!r} asked for {sorted(set(wanted))} "
+                f"but only matched {found}")
+        drop_mask |= matches
+        audit.append({"song_id": rule["song_id"], "instruments": wanted,
+                      "rows_dropped": int(matches.sum()),
+                      "file_ids": sorted(frame.loc[matches, "file_id"])})
+
+    return frame[~drop_mask].reset_index(drop=True), audit
+
+
 def report(frame: pd.DataFrame) -> None:
     """Print a short sanity summary of the built manifest."""
     print(f"\nsource_manifest: {len(frame):,} rows × {len(frame.columns)} cols")
@@ -213,12 +268,25 @@ def report(frame: pd.DataFrame) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Merge ingest manifest + ingest-store QC + taxonomy.")
     ap.add_argument("--taxonomy", default="configs/stem_taxonomy.yaml")
+    ap.add_argument("--exclusions", default=None,
+                    help="exclusion rules yaml; omit for v1 (nothing dropped)")
     ap.add_argument("--out", default="manifests/source_manifest")
     ap.add_argument("--dry-run", action="store_true", help="build + report, write nothing")
     args = ap.parse_args()
 
     root = find_root()
     frame = build(root, root / args.taxonomy)
+
+    if args.exclusions:
+        rows_before = len(frame)
+        frame, audit = apply_exclusions(frame, root / args.exclusions)
+        print(f"\n-- exclusions ({args.exclusions}) --")
+        for record in audit:
+            scope = record["instruments"] or "ENTIRE SONG"
+            print(f"  {record['song_id']}  {scope}  -> {record['rows_dropped']} rows")
+        print(f"  rows {rows_before:,} -> {len(frame):,} "
+              f"({rows_before - len(frame)} dropped)")
+
     report(frame)
 
     if args.dry_run:

@@ -1,0 +1,42 @@
+# manifest_exclusions.yaml — publisher-side data defects dropped from the source manifest.
+#
+# Consumed by src/data/build_source_manifest.py via --exclusions. Every rule names the
+# song it targets and, optionally, the instruments within it; omitting `instruments`
+# drops the whole song (master included). Each rule MUST match at least one row —
+# a rule that matches nothing is a hard error, so a mistyped song name cannot silently
+# exclude nothing and leave a defect in the pool.
+#
+# These are defects in the AI Hub 71955 publication, not in our ingest. Provenance and
+# row counts → docs/manifest_v2_provenance.md; discovery write-up → Notion, Dataset 1
+# preprocessing notes.
+#
+# NOT excluded, deliberately: 0905_창작국악_창작국악, whose single 해금 stem is bit-identical
+# to its master. That one is benign and confirmed by listening — a genuine solo 해금
+# piece, so the mix really is the instrument. It is also a val song and the val split is
+# frozen. Recorded here so nobody "fixes" it later.
+
+version: v2
+description: >-
+  71955 publisher defects found by the 2026-07-29 integrity sweep (byte-hash duplicate
+  grouping + master-fingerprint energy matching).
+
+exclusions:
+  - song_id: 0714_민속악_민요
+    dataset: "71955"
+    instruments: [대금, 아쟁, 피리]
+    reason: >-
+      These three stems are sample-identical to one another and carry an ensemble mix
+      rather than their instrument parts — the shared signal is the song's master scaled
+      by ~1.33x (correlation 0.9965, 8% residual). The real parts were overwritten at the
+      publisher and are unrecoverable. The song's other four stems (가야금 · 거문고 · 장구 ·
+      해금) are genuine and stay in the pool. Train split, so no eval leakage either way.
+
+  - song_id: 0885_창작국악_창작국악
+    dataset: "71955"
+    # no `instruments` key -> the entire song, master included
+    reason: >-
+      This song is 0886_창작국악_창작국악 looped seven times: 336 s of audio delivering 48 s
+      of unique music. Trimming would not help — the trimmed remainder is the same 48 s.
+      Excluding 0885 and keeping 0886 removes the 2x sampling weight that music would
+      otherwise carry. Content cost is nil (~1.12 h of 368.78 h = 0.30%). Both songs are
+      in the train split.
