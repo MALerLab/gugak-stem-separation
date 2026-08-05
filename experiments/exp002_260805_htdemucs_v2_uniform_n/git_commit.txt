@@ -1,0 +1,12 @@
+0ea3ace134606c3298a3c0be49944994d64e2faf
+RM scripts/init_exp001_checkpoint.py -> scripts/init_start_checkpoint.py
+ M src/data/build_source_manifest.py
+ M src/data/mix_dataset.py
+?? configs/exp002_htdemucs_v2_uniform_n.yaml
+?? configs/manifest_exclusions.yaml
+?? docs/manifest_v2_provenance.md
+?? experiments/exp002_260805_htdemucs_v2_uniform_n/
+?? manifests/parquet/source_manifest_v2.parquet
+?? scripts/smoke_train_step.py
+?? scripts/verify_manifest_v2.py
+8dbc33e61a0772d2b1e30a7020162f3823a5837d

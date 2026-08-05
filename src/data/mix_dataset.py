@@ -1,7 +1,8 @@
 """mix_dataset.py — on-the-fly incoherent training mixes (Training Data Strategy recipe).
 
-Each item is built, not loaded: draw HOW MANY classes go in the mix (density — from the
-measured audible-편성 distribution of real songs), draw WHICH classes (uniform), draw one
+Each item is built, not loaded: draw HOW MANY classes go in the mix (density — uniform
+over 1..n_classes, or from the measured audible-편성 distribution of real songs, per
+`density_mode`), draw WHICH classes (uniform), draw one
 activity-aware excerpt per class from the ingest store, apply live augmentations, sum to
 a mixture, then loudness-normalize mixture and targets by the same gain. Returns
 (stems, mixture) float32 tensors shaped [n_classes, 2, chunk] / [2, chunk] — the exact
@@ -17,9 +18,10 @@ NotImplementedError loudly rather than silently ignoring it. The nested
 the ensemble loudness distribution; absent or disabled, every stem keeps the stock
 random gain and the RNG stream is unchanged.
 
-Density is recomputed at init from the per-class coverage columns for the CONFIGURED
-class set — never read from the precomputed n_active_gt* columns, which count all 11
-taxonomy groups (an experiment that models fewer classes would inherit phantom counts).
+In measured mode, density is recomputed at init from the per-class coverage columns for
+the CONFIGURED class set — never read from the precomputed n_active_gt* columns, which
+count all 11 taxonomy groups (an experiment that models fewer classes would inherit
+phantom counts). Uniform mode reads no table at all.
 
 Run standalone (smoke test): see scripts/smoke_mix_dataset.py
 """
@@ -55,7 +57,15 @@ class MixDatasetConfig:
     # excerpt geometry
     segment_seconds: float = 10.0
     sample_rate: int = 44100
-    # density draw: audible = class coverage > threshold within a window of chunk_len
+    # density draw — HOW MANY classes go in a mix.
+    #   "measured": n ~ the distribution of how many classes are audible in a random
+    #               window of a real song (audible = coverage > threshold in a window of
+    #               density_chunk_len_s). exp001's mode.
+    #   "uniform":  n ~ uniform over 1..len(classes). exp002 onward — we cannot justify
+    #               matching real 편성 statistics when class IDENTITY is already uniform,
+    #               so the realism was half-hearted either way (prof, 2026-08-03).
+    # The two chunk knobs below are read only in "measured" mode.
+    density_mode: str = "measured"
     density_chunk_len_s: float = 10.0
     density_coverage_threshold: float = 0.25
     # live augmentation knobs (exp001: EQ probs 0.0 — built, off)
@@ -234,6 +244,32 @@ class GugakMixDataset(torch.utils.data.Dataset):
         return pool
 
     def _build_density_histogram(self) -> tuple[np.ndarray, np.ndarray]:
+        """The distribution n is drawn from — (values, probabilities) over class counts.
+
+        Dispatches on cfg.density_mode. Both modes return the same shape, so __getitem__
+        is mode-agnostic and the RNG consumes exactly one draw either way — an experiment
+        can switch modes without shifting the random stream's structure.
+        """
+        if self.cfg.density_mode == "uniform":
+            return self._uniform_density()
+        if self.cfg.density_mode == "measured":
+            return self._measured_density()
+        raise ValueError(f"density_mode={self.cfg.density_mode!r}: expected "
+                         "'uniform' or 'measured'")
+
+    def _uniform_density(self) -> tuple[np.ndarray, np.ndarray]:
+        """n uniform over 1..len(classes) — every mix size equally likely.
+
+        n=0 is excluded for the same reason the measured mode drops it: an all-silent
+        mixture teaches nothing. The upper end is the class count, since classes are
+        drawn without replacement.
+
+        This mode reads no manifest — chunk_activities is a measured-mode input only.
+        """
+        values = np.arange(1, len(self.cfg.classes) + 1)
+        return values, np.full(len(values), 1.0 / len(values))
+
+    def _measured_density(self) -> tuple[np.ndarray, np.ndarray]:
         """Audible-class-count distribution recomputed for the configured class set.
 
         Counts per window how many of cfg.classes exceed the coverage threshold —

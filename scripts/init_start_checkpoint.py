@@ -1,6 +1,6 @@
-"""init_exp001_checkpoint.py — build exp001's warm-start checkpoint (spec: model init).
+"""init_start_checkpoint.py — build an experiment's warm-start checkpoint (model init).
 
-Instantiates the 9-source HTDemucs exactly as MSST training will (same config, same
+Instantiates the N-source HTDemucs exactly as MSST training will (same config, same
 param names), then transfers every name+shape-compatible parameter from the official
 pretrained `htdemucs` checkpoint (4 Western sources, via the demucs package). Layers
 whose shape depends on the source count — the final source-splitting layers of both
@@ -11,11 +11,21 @@ Output is a PLAIN state_dict: MSST's `--load_only_compatible_weights` path perfo
 strict `model.load_state_dict(torch.load(path))`, so training starts from precisely
 this tensor set — no tolerant-load ambiguity.
 
+The re-initialized head layers are the ONE piece of randomness in an otherwise
+deterministic transfer, so `--seed` fixes it and the log records it. Without that, two
+runs of the "same" experiment would start from different output heads and the difference
+would be invisible and unrecoverable — which matters here because exp002 is the anchor
+for a seed-twin run.
+
+(Renamed from init_exp001_checkpoint.py 2026-08-05 — it was always config-driven and
+exp001-agnostic; the old name was misleading the moment exp002 used it.)
+
 Run:
-    uv run python scripts/init_exp001_checkpoint.py
-      --config configs/exp001_htdemucs_9stem.yaml
-      --out experiments/exp001_260728_htdemucs_9stem/checkpoints/start_checkpoint.ckpt
-      --log experiments/exp001_260728_htdemucs_9stem/checkpoint_init_log.txt
+    uv run python scripts/init_start_checkpoint.py
+      --config configs/exp002_htdemucs_v2_uniform_n.yaml
+      --out experiments/exp002_260805_htdemucs_v2_uniform_n/checkpoints/start_checkpoint.ckpt
+      --log experiments/exp002_260805_htdemucs_v2_uniform_n/checkpoint_init_log.txt
+      --seed 42
 """
 from __future__ import annotations
 
@@ -37,17 +47,18 @@ def group_of(param_name: str) -> str:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Warm-start checkpoint for exp001.")
-    ap.add_argument("--config", default="configs/exp001_htdemucs_9stem.yaml")
-    ap.add_argument("--out",
-                    default="experiments/exp001_260728_htdemucs_9stem/checkpoints/"
-                            "start_checkpoint.ckpt")
-    ap.add_argument("--log",
-                    default="experiments/exp001_260728_htdemucs_9stem/"
-                            "checkpoint_init_log.txt")
+    ap = argparse.ArgumentParser(description="Warm-start checkpoint for an experiment.")
+    ap.add_argument("--config", required=True, help="experiment YAML (defines the model)")
+    ap.add_argument("--out", required=True, help="output .ckpt path")
+    ap.add_argument("--log", required=True, help="init report path")
+    ap.add_argument("--seed", type=int, default=42,
+                    help="seeds the fresh init of the shape-mismatched head layers")
     args = ap.parse_args()
 
-    # target: the 9-source model, built by MSST itself -> param names match training
+    # the head layers are randomly initialized; seed BEFORE the model is built
+    torch.manual_seed(args.seed)
+
+    # target: the N-source model, built by MSST itself -> param names match training
     from utils.settings import get_model_from_config
     target_model, config = get_model_from_config("htdemucs",
                                                  str(REPO_ROOT / args.config))
@@ -81,6 +92,8 @@ def main() -> None:
     n_params_total = sum(v.numel() for v in target_state.values())
     n_params_moved = sum(target_state[n].numel() for n in transferred)
     lines = [
+        f"config: {args.config}",
+        f"seed (head init): {args.seed}",
         f"instruments ({len(config.training.instruments)}): "
         f"{list(config.training.instruments)}",
         f"pretrained source model: demucs 'htdemucs' "
