@@ -11,8 +11,8 @@ __pycache__/
 /data/gugak_ensemble_71955
 /data/gugak_solo_71470
 
-# --- figs/: generated plots (regenerable from the notebook/scripts that emit them) ---
-figs/*.png
+# --- figs/: generated plots, ignored wholesale — png archive only, kept on disk ---
+figs/
 
 # --- data/eda/: QC tables moved to manifests/ (2026-07-27); anything left here is
 #     scratch EDA output, disk-only ---
@@ -23,6 +23,11 @@ wandb/
 checkpoints/
 outputs/
 *.log
+
+# Checkpoint dirs relocated to ~/storage (repo disk was at 97%) and symlinked back in.
+# The `checkpoints/` rule above has a trailing slash, so it matches DIRECTORIES only —
+# git treats a symlink as a file, so the symlinks would show up untracked without this.
+experiments/**/checkpoints
 
 # --- notebooks: source tracked (outputs auto-stripped by nbstripout); ignore
 #     generated images so binaries stay out of a public repo ---
@@ -47,6 +52,10 @@ experiments/**/*.flac
 #     accumulate in the repo. ---
 presentation_prep/
 
+# --- demo_songs/: rendered separation demos, one subdir per model arm (regenerable
+#     by src/render_audio.py from the arm's checkpoint) ---
+/demo_songs/
+
 # --- OS / editor ---
 .DS_Store
 
@@ -69,3 +78,12 @@ manifests/csv/*
 # --- data/mix_smoke/: rendered smoke-test mixes (regenerable by
 #     scripts/smoke_mix_dataset.py, for listening only) ---
 /data/mix_smoke/
+
+# --- data/coherence_examples/: rendered coherent-vs-incoherent A/B listening pairs
+#     (regenerable by scripts/render_coherence_examples.py, for listening only) ---
+/data/coherence_examples/
+
+# --- MEMO.md: personal scratch notes, anywhere in the tree. Untracked by design —
+#     these are for thinking on, not for the record. Findings that survive graduate
+#     into the experiment's report or Notion. ---
+MEMO.md
