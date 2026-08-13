@@ -1,0 +1,36 @@
+exp002.4_260813_seed45 — all randomness surfaces, as prepared 2026-08-13
+
+The seed is ONE knob with THREE surfaces. All three move together to 45.
+
+  surface                     value  where it is declared
+  --------------------------  -----  --------------------------------------------------
+  1. mix draw stream             45  configs/exp002.4_htdemucs_seed45.yaml : gugak_mix.seed
+  2. trainer global (torch/np)   45  launch.sh : --seed 45   (data order + torch RNG)
+  3. output-head init            45  scripts/init_start_checkpoint.py --seed 45
+                                     -> checkpoints/start_checkpoint.ckpt
+                                     -> checkpoint_init_log.txt records "seed (head init): 45"
+
+Sibling arms, for reference:
+  exp002    (260805)  all three surfaces = 42   (terminal ep12 collapse, stopped ep32)
+  exp002.1  (260806)  all three surfaces = 43   (recovered, finished +3.9880 @ ep59)
+  exp002.2  (260806)  all three surfaces = 42, held fixed ON PURPOSE so that mixing
+                      coherence was the only variable in that arm
+  exp002.3  (260809)  all three surfaces = 44   (recovered, finished best +4.6557 @ ep58)
+  exp002.4  (260813)  all three surfaces = 45   <- this run
+
+Head-init independence, verified 2026-08-13 by direct tensor comparison against
+exp002.3's start_checkpoint.ckpt (533 tensors each):
+
+  529 TRUNK tensors  — bit-identical to seed 44's. The pretrained-weight transfer is
+                       deterministic, so the trunk is a controlled constant and is NOT
+                       part of the lottery.
+    4 HEAD tensors   — differ from seed 44's in all four tensors. These are
+                       decoder.3.conv_tr.{weight,bias} and tdecoder.3.conv_tr.{weight,bias}
+                       — the final source-splitting convs, reshaped from 4 Western
+                       sources to 9 gugak classes and therefore freshly initialized.
+                       4/4 differ = this arm holds its own lottery ticket, which is the
+                       single load-bearing requirement of a seed twin.
+
+  NOTE: seeds 42/43 start checkpoints were pruned in the 2026-08-11 housekeeping, so
+  unlike exp002.3's three-way check this one compares against seed 44 only. The builder
+  is seeded and reproducible, so 42/43 can be rebuilt bit-identically if ever needed.
