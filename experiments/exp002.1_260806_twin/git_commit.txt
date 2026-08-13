@@ -1,0 +1,4 @@
+43621e7328343369c51cbdcf149914e73fc5b8cd
+?? configs/exp002.1_htdemucs_twin.yaml
+?? experiments/exp002.1_260806_twin/
+8dbc33e61a0772d2b1e30a7020162f3823a5837d
