@@ -1,0 +1,27 @@
+43621e7328343369c51cbdcf149914e73fc5b8cd
+ M .gitignore
+ M experiments/exp002_260805_htdemucs_v2_uniform_n/LAUNCH_REPORT.md
+ m external/msst
+ M scripts/smoke_mix_dataset.py
+ M scripts/smoke_train_step.py
+ M src/data/mix_dataset.py
+?? configs/analysis/
+?? configs/exp002.1_htdemucs_twin.yaml
+?? configs/exp002.2_htdemucs_coherent.yaml
+?? configs/exp002.3_htdemucs_seed44.yaml
+?? configs/exp003.0_bsroformer_pilot.yaml
+?? configs/leakage_analysis.yaml
+?? experiments/exp002.1_260806_twin/
+?? experiments/exp002.2_260806_coherent/
+?? experiments/exp002.3_260809_seed44/
+?? experiments/exp002_260805_htdemucs_v2_uniform_n/leakage/
+?? experiments/exp003.0_260809_bsroformer_pilot/
+?? scripts/cross_source_leakage.py
+?? scripts/diff_run_config.py
+?? scripts/init_bsroformer_start_checkpoint.py
+?? scripts/render_coherence_examples.py
+?? scripts/verify_coherent_sampler.py
+?? src/analysis/
+8dbc33e61a0772d2b1e30a7020162f3823a5837d
+ M models/bs_roformer/attend.py
+ M models/bs_roformer/bs_roformer.py

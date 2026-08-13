@@ -1,0 +1,46 @@
+BS-RoFormer warm-start checkpoint — trunk transferred, all mask estimators fresh
+config: configs/exp003.0_bsroformer_pilot.yaml
+pretrained source: /home/jae.gye/storage/gugak-stemsep-experiments/pretrained/model_bs_roformer_ep_17_sdr_9.6568.ckpt
+seed (mask-estimator init): 42
+num_stems: 9
+instruments (9): ['가야금', '거문고', '기타', '대금', '아쟁', '양금', '타악기', '피리', '해금']
+
+tensors: 2595 target | 1355 pretrained
+    363 transferred from pretrained
+   2232 mask-estimator tensors HELD BACK (fresh by policy, not by shape)
+      0 shape mismatch outside the heads (fresh init)
+      0 absent in pretrained (fresh init)
+
+parameters: 254,894,412 total
+  transferred: 33,152,772 (13.0%)
+  freshly initialised: 221,741,640 (87.0%)
+    of which mask estimators: 221,741,640 (87.0%)
+
+determinism check: PASS — two independent builds at seed 42 are bit-identical across all 2595 tensors
+
+TRANSFERRED groups (tensor count):
+  band_split: 186
+  final_norm: 1
+  layers.0: 22
+  layers.1: 22
+  layers.2: 22
+  layers.3: 22
+  layers.4: 22
+  layers.5: 22
+  layers.6: 22
+  layers.7: 22
+
+HELD BACK — mask estimators, fresh by policy (tensor count):
+  mask_estimators.0: 248
+  mask_estimators.1: 248
+  mask_estimators.2: 248
+  mask_estimators.3: 248
+  mask_estimators.4: 248
+  mask_estimators.5: 248
+  mask_estimators.6: 248
+  mask_estimators.7: 248
+  mask_estimators.8: 248
+
+SHAPE MISMATCH outside the heads (should be empty):
+
+ABSENT in pretrained (fresh init):
