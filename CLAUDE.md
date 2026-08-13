@@ -106,8 +106,10 @@ Post-ingest silence is **not** bit-exact zero. DC removal leaves a ±1-LSB resid
   (e.g. `260719_zeroshot_baseline`). Track metrics (parquet/md); figures gitignored
   (regenerable from tracked metrics + script).
 - **wandb:** cloud target is entity `maler-gye`, project `gugak_stem_separation`, set in
-  `.env` (untracked) — never hardcoded, never by editing the MSST submodule (MSST's
-  hardcoded `project='msst'` is overridden by `WANDB_PROJECT`). **Every launch script must
+  `.env` (untracked) — never hardcoded, never by editing the MSST submodule. ⚠️ `WANDB_PROJECT`
+  does NOT override MSST's hardcoded `project='msst'` (explicit `wandb.init()` kwarg beats the
+  env var; `WANDB_ENTITY` does apply) → fix the project at upload: `wandb sync -p
+  gugak_stem_separation <run-dir>` (verified 2026-08-05, exp002 launch). **Every launch script must
   source it before training:** `set -a; source .env; set +a` — nothing loads `.env`
   automatically. `--wandb_offline` controls *streaming only*: wandb always writes the local
   transaction log either way, so an offline run is never a lost run (`wandb sync <dir>`
