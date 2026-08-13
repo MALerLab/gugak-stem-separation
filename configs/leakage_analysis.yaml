@@ -1,0 +1,19 @@
+# leakage_analysis.yaml — tunables for scripts/cross_source_leakage.py.
+# The checkpoint, config and output path are CLI arguments; this file holds only the
+# reading rules, so every leakage table in the project is built the same way.
+
+leakage:
+  # Energy floor below which a source is treated as silent and its cell skipped.
+  # Post-ingest silence is NOT bit-zero — DC removal leaves a 2⁻²³ (~1.19e-07) residue at
+  # about −138 dBFS — so an equality test would never fire. This is a MEAN-SQUARE floor on
+  # the whole track: 1e-12 is −120 dB in energy terms, far above the residue and far below
+  # any real stem. (→ repo CLAUDE.md, "Silence is not zero".)
+  silence_energy_eps: 1.0e-12
+
+  # Extension of the Σstem val renders (matches sumstem_eval.extension).
+  extension: flac
+
+  # Inference batch size for demix. Deliberately small: this analysis runs alongside live
+  # training arms and should yield SM time to them rather than compete. Overrides the
+  # experiment config's inference.batch_size, which is tuned for a dedicated eval pass.
+  inference_batch_size: 2

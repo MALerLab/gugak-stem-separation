@@ -1,0 +1,53 @@
+# compare_runs.yaml — reading rules for src/analysis/compare_runs.py.
+# Arms are passed as arguments; everything that decides HOW a comparison is read lives
+# here, so the same judgement applies to every pair (seed twin, coherent-mix arm,
+# BS-RoFormer) instead of being re-decided per invocation. Every key is overridable on
+# the CLI for one-off exploration.
+
+compare_runs:
+  # --- what counts as readable -----------------------------------------------------
+  # Evals at or below this optimizer-step count are dropped before anything is computed.
+  # The output heads start randomly initialized, so early evals measure how fast each arm
+  # escaped its own warm-up — a real difference, but not the one being asked about.
+  # 25,000 = 10 eval cycles at 2,500 optimizer steps/eval.
+  warmup_steps: 25000
+
+  # Minimum matched evals before the report will interpret anything. Below this the
+  # volatility estimate is not meaningful and the report prints a refusal banner.
+  min_evals_for_volatility: 3
+
+  # --- the noise yardstick ---------------------------------------------------------
+  # How many TRAILING matched evals the gap and the swing are both computed over.
+  # null = use every matched eval past warm-up. Set a number to ask "how do these arms
+  # compare RECENTLY", which matters once an arm has changed regime (a collapse, an lr
+  # drop) and its early history no longer describes its current volatility.
+  # Gap and swing always share this window, or the ratio would not be apples-to-apples.
+  volatility_window: null
+
+  # Verdict cutoffs, as a RATIO of between-arm gap to within-arm swing. The question is
+  # never "how many dB" in the abstract — it is whether the gap between arms is bigger
+  # than the wobble each arm shows against itself over the same window.
+  #   ratio <  inside_noise_ratio                   -> INSIDE NOISE, say so plainly
+  #   inside_noise_ratio <= r < exceeds_noise_ratio -> marginal; suggestive, not a finding
+  #   ratio >= exceeds_noise_ratio                  -> EXCEEDS NOISE, worth interpreting
+  # 2.0 is deliberately conservative: exp001.1 measured epoch-to-epoch val swing at
+  # ~±0.5–1.4 dB, and n=2 arms give a range, not a standard deviation.
+  inside_noise_ratio: 1.0
+  exceeds_noise_ratio: 2.0
+
+  # --- presentation ----------------------------------------------------------------
+  # Classes called out separately. 가야금 is why the seed twin exists (−5.9 dB in exp001
+  # despite being the second most abundant class, against 거문고's +1.5); 양금 is the
+  # rare-class canary resting on only 9 val songs. All classes are always shown anyway.
+  highlight_classes: [가야금, 양금]
+
+  # Row label for the across-class mean (MSST's own selection metric).
+  overall_label: OVERALL
+
+  # --- where the numbers come from -------------------------------------------------
+  # Metric key inside MSST's persisted all_metrics.
+  metric: si_sdr
+
+  # Rolling checkpoint each arm's metric history is read from. The glob covers every
+  # model family MSST writes (last_htdemucs.ckpt, last_bs_roformer.ckpt, …).
+  checkpoint_glob: "last_*.ckpt"

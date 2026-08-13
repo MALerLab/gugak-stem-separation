@@ -115,6 +115,99 @@ exp002 matches exp001.2's bf16 rate. At 2.21 it/s an epoch of 10,000 loader step
 (= 2,500 optimizer steps) takes ~75 min plus validation, so the 60-epoch ceiling is
 roughly 3.5 days of wall clock.
 
-## First eval cycles
+## Running notes
 
-*(filled in below as they land)*
+Quick notes, kept in one place. Not a write-up — tidy later.
+
+### Trajectory to ep14 (2026-08-06)
+
+Zero non-finite steps in all 15 epochs (150k loader steps). Best **ep11 = −1.1442**.
+
+| ep | 가야금 | 거문고 | 기타 | 대금 | 아쟁 | 양금 | 타악기 | 피리 | 해금 | avg |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | −21.66 | −21.52 | −25.23 | −18.87 | −19.32 | −23.09 | −2.63 | −18.32 | −23.40 | −19.34 |
+| 6 | −9.51 | 1.43 | −10.89 | −6.99 | −8.06 | −15.14 | 14.12 | 2.01 | 3.85 | −3.24 |
+| 11 | −9.14 | 2.72 | −9.28 | −5.07 | −0.21 | −12.63 | 14.58 | 3.45 | 5.28 | **−1.14** |
+| 12 | −19.62 | 2.84 | −17.53 | −0.98 | 0.01 | −23.11 | 14.14 | 3.33 | 5.62 | −3.92 |
+| 13 | −20.42 | 2.87 | −19.07 | 1.61 | 0.17 | −22.09 | 14.33 | 3.43 | 5.69 | −3.72 |
+| 14 | −21.44 | 2.93 | −22.10 | 2.13 | −0.08 | −20.86 | 14.42 | 3.54 | 5.56 | −3.99 |
+
+### 타악기 slow start — resolved, not a defect
+
+Epoch 0 had 타악기 at −2.63 vs exp001's +10.77, and the pre-registered test was "climb
+steeply over evals 1–3 toward ~+10 or the uniform density is hurting percussion." It went
+−2.63 → +10.51 → +11.13 → +11.28, now +14.42. Slow start. The broader epoch-0 gap
+(−19.34 vs exp001's −13.08) also closed: ep11 at −1.14 is roughly where exp001 was by ep15.
+So the train/eval density-mismatch worry did not show up as a sustained handicap.
+
+### ⚠️ ep12 excursion — HYPOTHESIS: head competition, not numerics
+
+**Unverified. Written down because it is the tell worth testing, not because it is established.**
+
+At ep12 three heads collapsed and one jumped, in the same eval:
+
+| | ep11 → ep14 | Δ |
+|---|---|---|
+| 가야금 | −9.14 → −21.44 | **−12.30** |
+| 기타 | −9.28 → −22.10 | **−12.81** |
+| 양금 | −12.63 → −20.86 | **−8.22** |
+| **대금** | −5.07 → **+2.13** | **+7.20** |
+| other five | | flat, ±0.3 |
+
+Three reasons this is not the fp16 failure mode:
+
+1. **Zero non-finite steps**, every epoch, including through the excursion. The fp16 cliffs
+   were *every step skipped*; here every step lands.
+2. **Training loss falls monotonically right through it** — 0.005843 → 0.005540 → 0.005236
+   → 0.005148. The model is still learning.
+3. **대금 gained +7.2 dB at the exact moment the other three lost 8–13 dB.** That
+   simultaneity is the tell: it reads as the model *reallocating contested spectral energy*
+   from three heads into one, not as numerical corruption.
+
+Consistent with the exp001 fp32 arm's milder ep18 excursion (self-healed), which Notion
+already reads as head competition rather than numerics. Overlapping class set too —
+exp001's fragile heads were 가야금 · 대금 · 양금 · 아쟁.
+
+**Not healing over three evals.** 가야금 −19.62 → −20.42 → −21.44 and 기타 −17.53 → −19.07
+→ −22.10 are still drifting worse. lr still 1e-4; ReduceLROnPlateau (patience 5, best ep11)
+should halve it to 5e-5 around ep17.
+
+**Decision: let it ride.** Do NOT stop and resume from the ep11 best with a hand-halved lr —
+that would destroy the one property exp002 exists to have (clean, start-to-finish, nothing
+inherited) and turn it back into exp001. If the recipe cannot get past this, that is a
+finding about the recipe and belongs in the record.
+
+**How to test the hypothesis later** (cheap, runs are seeded):
+- Does energy actually move? Compare per-head output energy on fixed val songs at the ep11
+  vs ep14 checkpoints — competition predicts 대금's head absorbs roughly what 가야금/기타/양금
+  lose; corruption predicts the lost energy just disappears.
+- Is it 편성-driven? Check whether the collapse concentrates in val songs where 대금 plays
+  alongside 가야금/기타/양금.
+- Does the twin (exp002.1, seed 43) reproduce it, and at the same quality level? Same-level
+  ⇒ competence-triggered like the fp16 cliffs. Absent ⇒ seed-specific.
+
+Paper angle: a head-competition instability reproducing across runs *and* precisions on a
+consistent class set is a cleaner story than the fp16 incident, because bf16 rules numerics
+out by construction.
+
+### Seed twin launched 2026-08-06 08:00:54 (not by this session)
+
+`exp002.1_260806_twin` on **GPU 1**, tmux `exp002_1`, config
+`configs/exp002.1_htdemucs_twin.yaml`, dir `experiments/exp002.1_260806_twin/`.
+
+Clean twin — config differs from exp002 in **`gugak_mix.seed` 42→43 and `run_name` only**.
+All three randomness sources moved together: head init (`--seed 43`, own
+`start_checkpoint.ckpt`, recorded in its `checkpoint_init_log.txt`), mix draw stream
+(`gugak_mix.seed: 43`), trainer global (`--seed 43`). Running at ~2.10 it/s.
+
+Its main value here is unplanned: it is a natural test of whether the ep12 excursion is
+competence-triggered or seed-specific.
+
+### Still open
+
+- Fill in evals 15+ and whether the scheduler's lr halving resolves the excursion.
+- Commits `4191ea5` and `43621e7` are local, unpushed.
+- Notion not updated: manifest v2, the exp002 spec, the 0714 correction (the three stems are
+  sample-identical *to each other* and ≈ master × 1.33 — not byte-copies of the master).
+- `CLAUDE.md` wrongly claims `WANDB_PROJECT` overrides MSST's `project='msst'`; it does not
+  (explicit kwarg). Sync with `wandb sync -p gugak_stem_separation`.
