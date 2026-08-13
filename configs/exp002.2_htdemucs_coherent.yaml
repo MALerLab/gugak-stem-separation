@@ -1,0 +1,244 @@
+# exp002.2_htdemucs_coherent.yaml — the coherent-mixing arm.
+# One experiment = one config = one wandb run (exp002.2_260806_coherent).
+#
+# WHY THIS RUN EXISTS. Every training mix so far has been INCOHERENT: 가야금 lifted from
+# song A, 거문고 from song B, pasted together. That is standard practice in Western music
+# source separation and it works well there. Gugak ensemble music is HETEROPHONIC —
+# the instruments play essentially the same melody at the same time, differing mainly in
+# idiomatic ornamentation — so an incoherent mix pits two different melodies, modes and
+# tempi against each other, which is a much easier separation problem than the real
+# mixtures val and test are built from. The suspicion this run tests: the model has been
+# trained almost entirely on the easy case and evaluated on the hard one, and has never
+# had to learn unison disentanglement because unison barely occurs in training. exp001 is
+# consistent with that — 가야금 (the most unison-exposed melodic instrument) and 양금 (a
+# 풍류 doubling voice) were its two worst classes.
+#
+# DERIVED FROM exp002's config as actually logged in its wandb transaction log
+# (offline-run-20260805_095738-476pciph), not from a reconstructed file. Verified with
+#   uv run python scripts/diff_run_config.py \
+#     --reference-run wandb/offline-run-20260805_095738-476pciph \
+#     --candidate configs/exp002.2_htdemucs_coherent.yaml \
+#     --expect gugak_mix.coherent_mix_prob --expect training.run_name
+# TWO fields differ, each marked [exp002.2] below:
+#   1. coherent_mix_prob 1.0 — the experiment
+#   2. run_name             — run-scoped, not a variable
+# Everything else — manifest v2, lr 1e-4, bf16, seed 42, the 9-class list, the whole
+# architecture block — is byte-for-byte exp002's.
+#
+# The L/R-swap scope change (per stem → per mix) carries NO config field: it is intrinsic
+# to the coherent path, because swapping a real ensemble's stems independently would
+# scramble its spatial image and undo the coherence the run exists to create.
+#
+# Structure: MSST sections (audio/training/augmentations/inference/model/htdemucs)
+# consumed by external/msst train.py, + our own blocks (gugak_mix = the mix
+# dataloader, sumstem_eval = the Σstem val renderer). Loss/metrics are CLI flags:
+# --loss l1_loss --metrics si_sdr --metric_for_scheduler si_sdr (→ launch script).
+
+# --- MSST: audio geometry ---
+audio:
+  chunk_size: 441000        # 10 s × 44100 — the checkpoint's native training length
+  min_mean_abs: 0.0         # unused: our dataset does activity-aware draws itself
+  hop_length: 1024
+
+# --- MSST: training ---
+training:
+  run_name: exp002.2_260806_coherent              # [exp002.2]
+  custom_dataset: "src.data.mix_dataset:create_msst_dataset"   # fork hook → our loader
+  batch_size: 8                     # physical, per spec (× accum 4 → effective 32)
+  gradient_accumulation_steps: 4
+  grad_clip: 5.0                    # HTDemucs ft recipe (L2 norm)
+  segment: 10
+  shift: 1
+  samplerate: 44100
+  channels: 2
+  normalize: false                  # normalization owned by the dataset (−19 LUFS tuple)
+  instruments: [가야금, 거문고, 기타, 대금, 아쟁, 양금, 타악기, 피리, 해금]  # = gugak_mix.classes
+  target_instrument: null
+  num_epochs: 60                    # 60 × 2,500 optimizer steps = 150k ceiling (spec)
+  num_steps: 10000                  # loader iterations per "epoch" = 2,500 OPTIMIZER
+                                    # steps at accum 4 → eval every 2,500 steps (spec)
+  optimizer: adam
+  lr: 1.0e-04                       # [exp002] the HTDemucs fine-tune recipe's own value
+                                    # (⅓ of their from-scratch lr). exp001 ran at 5e-5
+                                    # nominal / 2.5e-5 live only because of the post-cliff
+                                    # resume — that halving is history, not a decision to
+                                    # inherit. Launching fresh means nothing overrides it.
+  patience: 5                       # ReduceLROnPlateau (scheduler, NOT early stop —
+                                    # MSST HAS no early stop; the plateau stop is manual,
+                                    # see the launch script's STOP POLICY)
+  reduce_factor: 0.5
+  q: 0.95
+  coarse_loss_clip: true
+  ema_momentum: 0                   # OFF — MSST single-GPU path never evals/saves EMA
+                                    # weights (dead overhead) → DEVIATION, see report
+  other_fix: false
+  use_amp: true                     # bf16 FROM LAUNCH (exp001 reached it mid-run). bf16
+  amp_dtype: bfloat16               # carries fp32's exponent range in 16 bits, so the
+                                    # fp16 overflow behind exp001's two cliffs is
+                                    # structurally impossible; the exp001.1 probe logged
+                                    # 0 non-finite steps in 40,000. GradScaler
+                                    # auto-disables under bf16 (verify the AMP: line
+                                    # prints grad_scaler_enabled=False); STFT/iSTFT stay
+                                    # fp32-pinned in the model regardless.
+  inference_amp_dtype: float32      # eval stays pure fp32 — the same measuring instrument
+                                    # as exp001, so val curves remain directly comparable
+
+# --- MSST: stock augmentations OFF — all augs live in gugak_mix ---
+augmentations:
+  enable: false
+
+# --- MSST: eval-time chunked inference ---
+inference:
+  num_overlap: 2            # step = chunk/2 → 50% overlap (MSST integer semantics;
+                            # spec's 25% is not expressible — deviation, quality ≥ spec)
+  batch_size: 8
+
+# --- MSST: model ---
+model: htdemucs
+
+gugak_mix:
+  # class scheme: publisher's 9, pitched percussion (편종·편경·방향) quarantined —
+  # excluded from training entirely, NOT folded back into 타악기. Order = output slots.
+  classes: [가야금, 거문고, 기타, 대금, 아쟁, 양금, 타악기, 피리, 해금]
+
+  # [exp002] manifest v2 — 16 publisher-defective rows removed (0714's three
+  # mix-carrying stems + all of 0885, which is 0886 looped 7×). v1 is untouched on disk
+  # as exp001's record. → docs/manifest_v2_provenance.md, configs/manifest_exclusions.yaml
+  source_manifest: manifests/parquet/source_manifest_v2.parquet
+
+  # source pool: ensemble only — 71470 solo pool parked (scope decision 2026-08-03)
+  datasets: ["71955"]
+  split: train
+
+  # excerpt geometry: the checkpoint's native training length
+  segment_seconds: 10.0
+  sample_rate: 44100
+
+  # density. Under coherent mixing the density block is NOT consulted: n is drawn
+  # uniformly over 1..(classes audible in the drawn window), so the window's own 편성
+  # sets the ceiling. Left at exp002's values so the diff stays two fields wide and so
+  # coherent_mix_prob < 1.0 (a mixed run) would behave exactly like exp002 on its
+  # incoherent half.
+  # ⚠️ Consequence, measured not assumed: because 160 of the 676 train songs carry only
+  # two classes, the realised n leans far sparser than exp002's flat 1..9. That is a
+  # second axis of difference between the arms and is quantified in the launch report.
+  density_mode: uniform
+  density_chunk_len_s: 10.0         # inert (measured-mode input)
+  density_coverage_threshold: 0.25  # ACTIVE under coherent mixing — it is the test for
+                                    # "is this stem audible in this window", i.e. what
+                                    # can be drawn and what caps n
+
+  # live augmentations. EQ stays OFF, exactly as in exp002 — this arm changes mixing
+  # coherence and nothing else, so it must not carry an extra augmentation.
+  gain_min: 0.25                    # per-stem random gain KEPT: varying the balance
+  gain_max: 1.25                    # does not disturb the melodic relationships that
+                                    # make the mix coherent
+  channel_swap_prob: 0.5            # [exp002.2] same probability, PER MIX rather than
+                                    # per stem — see the header note
+  eq_stem_prob: 0.0
+  eq_mixbus_prob: 0.0
+
+  # mixture normalization: loudnorm mixture+targets by one shared gain to the
+  # dataset-native loudness, then peak-guard
+  target_lufs: -19.0
+  peak_ceiling: 0.99
+
+  # loudness_match is deliberately ABSENT — it re-levels solo-pool stems onto the
+  # ensemble distribution, and there is no solo pool in this run.
+
+  seed: 42                      # DELIBERATELY the same as exp002, not exp002.1's 43.
+                                # This arm is a single-variable comparison against
+                                # exp002, so seed is held fixed and mixing coherence is
+                                # the only intended difference. (⚠️ Holding the seed
+                                # cannot make the two runs see the same DATA — a
+                                # different sampling algorithm consumes randomness
+                                # differently. It removes seed as an explanatory
+                                # variable; exp002.1 is what measures how much seed
+                                # alone is worth.)
+
+  # [exp002.2] COHERENT MIXING — the experiment. 1.0 = every training example is drawn
+  # from one song at one time offset, so the selected stems are the real ensemble
+  # playing together rather than unrelated instruments pasted over each other.
+  # 0.0 (exp002 and everything before it) is unchanged and still the default; at 0.0 the
+  # coherent path consumes no randomness at all, so exp002's draw stream is bit-identical
+  # under this code. Verified: 64/64 items hash-identical before and after the change.
+  coherent_mix_prob: 1.0
+
+  # --- reserved knobs (designed, not implemented — enabling raises) ---
+  multi_sample: {}              # 타악-2× seam, e.g. {타악기: 2}
+  pitch_pool_manifest: null     # (source × semitone) pool table, still deferred
+  draw_unit: file               # 'song_base' = summed same-base stems, reserved
+
+# Σstem eval variant (val/test), rendered by src/data/build_sumstem_eval.py in the
+# MSST-native layout (<song>/mixture.flac + <song>/<class>.flac). Classes come from
+# gugak_mix.classes above — train and eval cannot drift. Lives on dataset NVMe.
+# The existing render is reused unchanged: every excluded file is in the TRAIN split,
+# so v1 and v2 describe the val split identically.
+sumstem_eval:
+  out_root: data/gugak_ensemble_71955/sumstem_9stem
+  extension: flac
+  subtype: PCM_24
+
+# --- MSST: HTDemucs architecture — copied VERBATIM from the msst musdb18 template
+# (configs/config_musdb18_htdemucs.yaml @ fork 65266a2). Must match the official
+# pretrained checkpoint's hyperparameters or trunk weights won't transfer. ---
+htdemucs:
+  channels: 48
+  channels_time:
+  growth: 2
+  num_subbands: 1
+  nfft: 4096
+  wiener_iters: 0
+  end_iters: 0
+  wiener_residual: false
+  cac: true
+  depth: 4
+  rewrite: true
+  multi_freqs: []
+  multi_freqs_depth: 3
+  freq_emb: 0.2
+  emb_scale: 10
+  emb_smooth: true
+  kernel_size: 8
+  stride: 4
+  time_stride: 2
+  context: 1
+  context_enc: 0
+  norm_starts: 4
+  norm_groups: 4
+  dconv_mode: 3
+  dconv_depth: 2
+  dconv_comp: 8
+  dconv_init: 1e-3
+  bottom_channels: 512
+  t_layers: 5
+  t_hidden_scale: 4.0
+  t_heads: 8
+  t_dropout: 0.0
+  t_layer_scale: True
+  t_gelu: True
+  t_emb: sin
+  t_max_positions: 10000
+  t_max_period: 10000.0
+  t_weight_pos_embed: 1.0
+  t_cape_mean_normalize: True
+  t_cape_augment: True
+  t_cape_glob_loc_scale: [5000.0, 1.0, 1.4]
+  t_sin_random_shift: 0
+  t_norm_in: True
+  t_norm_in_group: False
+  t_group_norm: False
+  t_norm_first: True
+  t_norm_out: True
+  t_weight_decay: 0.0
+  t_lr:
+  t_sparse_self_attn: False
+  t_sparse_cross_attn: False
+  t_mask_type: diag
+  t_mask_random_seed: 42
+  t_sparse_attn_window: 400
+  t_global_window: 100
+  t_sparsity: 0.95
+  t_auto_sparsity: False
+  t_cross_first: False
+  rescale: 0.1

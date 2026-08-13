@@ -1,0 +1,42 @@
+config: configs/exp002.2_htdemucs_coherent.yaml
+seed (head init): 42
+instruments (9): ['가야금', '거문고', '기타', '대금', '아쟁', '양금', '타악기', '피리', '해금']
+pretrained source model: demucs 'htdemucs' (['drums', 'bass', 'other', 'vocals'])
+tensors: 533 total | 529 transferred | 4 shape-mismatch (fresh init) | 0 absent in pretrained (fresh init)
+parameters transferred: 41,975,216 / 41,996,006 (100.0%)
+
+TRANSFERRED groups (count):
+  channel_downsampler: 2
+  channel_downsampler_t: 2
+  channel_upsampler: 2
+  channel_upsampler_t: 2
+  crosstransformer: 172
+  decoder.0: 22
+  decoder.1: 22
+  decoder.2: 22
+  decoder.3: 20
+  encoder.0: 22
+  encoder.1: 22
+  encoder.2: 22
+  encoder.3: 22
+  freq_emb: 1
+  tdecoder.0: 22
+  tdecoder.1: 22
+  tdecoder.2: 22
+  tdecoder.3: 20
+  tencoder.0: 22
+  tencoder.1: 22
+  tencoder.2: 22
+  tencoder.3: 22
+
+RE-INITIALIZED groups — shape mismatch (count):
+  decoder.3: 2
+  tdecoder.3: 2
+
+RE-INITIALIZED shape-mismatch detail:
+  decoder.3.conv_tr.weight  target(48, 36, 8, 1) vs pretrained(48, 16, 8, 1)
+  decoder.3.conv_tr.bias  target(36,) vs pretrained(16,)
+  tdecoder.3.conv_tr.weight  target(48, 18, 8) vs pretrained(48, 8, 8)
+  tdecoder.3.conv_tr.bias  target(18,) vs pretrained(8,)
+
+ABSENT in pretrained (fresh init):

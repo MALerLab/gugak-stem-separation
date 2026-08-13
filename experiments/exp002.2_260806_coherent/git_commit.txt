@@ -1,0 +1,14 @@
+43621e7328343369c51cbdcf149914e73fc5b8cd
+ M .gitignore
+ M experiments/exp002_260805_htdemucs_v2_uniform_n/LAUNCH_REPORT.md
+ M src/data/mix_dataset.py
+?? configs/arm_comparison.yaml
+?? configs/exp002.1_htdemucs_twin.yaml
+?? configs/exp002.2_htdemucs_coherent.yaml
+?? experiments/exp002.1_260806_twin/
+?? experiments/exp002.2_260806_coherent/
+?? scripts/compare_run_arms.py
+?? scripts/diff_run_config.py
+?? scripts/render_coherence_examples.py
+?? scripts/verify_coherent_sampler.py
+8dbc33e61a0772d2b1e30a7020162f3823a5837d
