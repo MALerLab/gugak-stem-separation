@@ -1,0 +1,32 @@
+exp002.3_260809_seed44 — all randomness surfaces, as launched 2026-08-09T16:41:50+09:00
+
+The seed is ONE knob with THREE surfaces. All three move together to 44.
+
+  surface                     value  where it is declared
+  --------------------------  -----  --------------------------------------------------
+  1. mix draw stream             44  configs/exp002.3_htdemucs_seed44.yaml : gugak_mix.seed
+  2. trainer global (torch/np)   44  launch.sh : --seed 44   (data order + torch RNG)
+  3. output-head init            44  scripts/init_start_checkpoint.py --seed 44
+                                     -> checkpoints/start_checkpoint.ckpt
+                                     -> checkpoint_init_log.txt records "seed (head init): 44"
+
+Sibling arms, for reference:
+  exp002    (260805)  all three surfaces = 42
+  exp002.1  (260806)  all three surfaces = 43
+  exp002.2  (260806)  all three surfaces = 42, held fixed ON PURPOSE so that mixing
+                      coherence was the only variable in that arm
+  exp002.3  (260809)  all three surfaces = 44   <- this run
+
+Head-init independence, verified 2026-08-09 by direct tensor comparison of the three
+start_checkpoint.ckpt files (533 tensors each):
+
+  529 TRUNK tensors  — bit-identical across seeds 42 / 43 / 44. The pretrained-weight
+                       transfer is deterministic, so the trunk is a controlled constant
+                       and is NOT part of the lottery.
+    4 HEAD tensors   — differ in all three pairwise comparisons (42v43, 42v44, 43v44).
+                       These are decoder.3.conv_tr.{weight,bias} and
+                       tdecoder.3.conv_tr.{weight,bias} — the final source-splitting
+                       convs, reshaped from 4 Western sources to 9 gugak classes and
+                       therefore freshly initialized.
+                       4/4 differ = this arm holds its own lottery ticket, which is the
+                       single load-bearing requirement of a seed twin.
