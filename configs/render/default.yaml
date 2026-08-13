@@ -1,0 +1,37 @@
+# configs/render/default.yaml — default render job for src/render_audio.py.
+# One YAML = one render job; copy + edit for a different checkpoint or song set.
+# Baseline: BS-RoFormer pilot (exp003.0), best finished epoch at time of writing.
+# The pilot is still training — bump `checkpoint` when a better epoch lands.
+
+checkpoint: experiments/exp003.0_260809_bsroformer_pilot/checkpoints/model_bs_roformer_ep_5_si_sdr_7.7659.ckpt
+model_config: configs/exp003.0_bsroformer_pilot.yaml
+model_type: bs_roformer            # MSST model key — must match the model config
+
+val_root: data/gugak_ensemble_71955/sumstem_9stem/val
+extension: flac                    # audio extension of the val tree
+chunk_activities: manifests/parquet/chunk_activities.parquet
+
+excerpt:
+  seconds: 30.0                    # excerpt length (any value; ignored under full_song)
+  pad_seconds: 5.0                 # separated-then-trimmed so chunking edges stay outside
+  # how the excerpt window is chosen, scored from chunk_activities coverage:
+  #   most_dense | least_dense | uniform_random | full_song
+  # a per-song `start_s` (below) overrides the mode for that song.
+  selection: most_dense
+  activity_chunk_len_s: 10.0       # which window length to read from chunk_activities
+  coverage_threshold: 0.25         # a class counts as audible above this window fraction
+  seed: 42                         # consumed only by uniform_random
+
+# join each stem's full-song SI-SDR (from the checkpoint's own eval history) into the CSVs
+full_song_scores: true
+
+# songs to render, any number of entries. Optional per-song keys:
+#   note    — free-text "why this song", carried into the output CSVs
+#   start_s — explicit excerpt start (seconds), overrides the selection mode
+songs:
+  - song_id: 0355_민속악_산조
+    note: "sparse duo texture (피리 + 타악기) — exp001's best case"
+  - song_id: 0076_정악_풍류음악
+    note: "풍류음악 quartet — every class positive under exp001"
+  - song_id: 0126_정악_궁중음악
+    note: "hardest: all 9 classes, heterophonic unison"
