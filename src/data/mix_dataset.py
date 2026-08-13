@@ -1,19 +1,35 @@
-"""mix_dataset.py — on-the-fly incoherent training mixes (Training Data Strategy recipe).
+"""mix_dataset.py — on-the-fly training mixes (Training Data Strategy recipe).
 
-Each item is built, not loaded: draw HOW MANY classes go in the mix (density — uniform
+Two mixing modes, selected by `coherent_mix_prob` (0.0 = fully incoherent, the default
+and everything up to exp002; 1.0 = fully coherent, exp002.2; values between mix the two
+per item).
+
+INCOHERENT (the base recipe). Draw HOW MANY classes go in the mix (density — uniform
 over 1..n_classes, or from the measured audible-편성 distribution of real songs, per
-`density_mode`), draw WHICH classes (uniform), draw one
-activity-aware excerpt per class from the ingest store, apply live augmentations, sum to
-a mixture, then loudness-normalize mixture and targets by the same gain. Returns
-(stems, mixture) float32 tensors shaped [n_classes, 2, chunk] / [2, chunk] — the exact
-batch contract MSST's trainer consumes, so this class drops into its DataLoader.
+`density_mode`), draw WHICH classes (uniform), draw one activity-aware excerpt per class
+from the ingest store — each from a DIFFERENT random song at a DIFFERENT random offset.
+
+COHERENT (exp002.2). Draw one song, one time window in it, and take every selected stem
+from THAT song at THAT offset, so the instruments are playing together as recorded.
+Motivation: gugak ensembles are heterophonic — instruments play near-unison variants of
+one melodic line — so an incoherent mix (가야금 from song A over 거문고 from song B) is a
+much easier separation problem than the real mixtures val and test are built from. This
+mode trains on the hard case. See `_coherent_item` for the draw, and note the two
+consequences it carries by construction: class frequency stops being uniform and starts
+following real 편성 (deliberate, not corrected for), and n is capped by how many classes
+are actually audible in the drawn window.
+
+Both modes then apply live augmentations, sum to a mixture, and loudness-normalize
+mixture and targets by the same gain. Returns (stems, mixture) float32 tensors shaped
+[n_classes, 2, chunk] / [2, chunk] — the exact batch contract MSST's trainer consumes,
+so this class drops into its DataLoader.
 
 Everything is manifest-driven (source_manifest ⋈ activity_segments ⋈ chunk_activities);
 no directory walking, and no audio is decoded at init. Every knob lives in the
 experiment YAML's `gugak_mix` block — including RESERVED keys for features that are
-designed but deliberately not implemented yet (coherent mixes, 타악-2× multi-sampling,
-the pitch-shift pool, song-base draw units). Setting one of those raises
-NotImplementedError loudly rather than silently ignoring it. The nested
+designed but deliberately not implemented yet (타악-2× multi-sampling, the pitch-shift
+pool, song-base draw units). Setting one of those raises NotImplementedError loudly
+rather than silently ignoring it. The nested
 `loudness_match` sub-block (→ src/data/loudness_match.py) re-levels solo-pool stems onto
 the ensemble loudness distribution; absent or disabled, every stem keeps the stock
 random gain and the RNG stream is unchanged.
@@ -68,9 +84,18 @@ class MixDatasetConfig:
     density_mode: str = "measured"
     density_chunk_len_s: float = 10.0
     density_coverage_threshold: float = 0.25
+    # coherent mixing — probability that an item is drawn from ONE song at ONE offset
+    # instead of from independent songs per class. 0.0 = the incoherent base recipe
+    # (default; consumes no randomness, so the draw stream is bit-identical to a run
+    # that predates this feature). 1.0 = exp002.2. Under coherent draws n is uniform
+    # over 1..(classes audible in the window), so `density_mode` is not consulted.
+    coherent_mix_prob: float = 0.0
     # live augmentation knobs (exp001: EQ probs 0.0 — built, off)
     gain_min: float = 0.25
     gain_max: float = 1.25
+    # L/R swap. Applied PER STEM in incoherent mixes (the stems are unrelated anyway)
+    # and PER MIX in coherent ones — swapping a real ensemble's stems independently
+    # would scramble its spatial image, which is part of what makes it coherent.
     channel_swap_prob: float = 0.5
     eq_stem_prob: float = 0.0
     eq_mixbus_prob: float = 0.0
@@ -89,7 +114,6 @@ class MixDatasetConfig:
     # reproducibility
     seed: int = 42
     # --- RESERVED knobs (designed, not implemented — nonzero/non-default raises) ---
-    coherent_mix_prob: float = 0.0        # p>0 = coherent same-song draws (+ 판소리 trim)
     multi_sample: dict = field(default_factory=dict)   # {class: n_draws}, 타악-2× seam
     pitch_pool_manifest: str | None = None             # (source × semitone) pool table
     draw_unit: str = "file"                            # "song_base" = summed same-base
@@ -120,6 +144,46 @@ class SourceEntry(NamedTuple):
     dataset: str
     source_lufs: float
     source_channels: int
+
+
+# --- song entry (coherent draws only) ---------------------------------------
+class SongEntry(NamedTuple):
+    """One drawable song: its stems grouped by class, plus the pooled activity it shows.
+
+    `joint_segments` is every active segment of every drawable stem of the song,
+    concatenated — the JOINT activity criterion the coherent window draw runs on. Times
+    where several instruments play contribute several overlapping segments, so a
+    duration-weighted draw over this pool lands on busy passages more often than on
+    passages where one instrument is noodling alone. That is the intended behaviour: it
+    is the same activity-aware logic the incoherent path applies per stem, evaluated
+    across the song instead.
+
+    `max_frames` is the LONGEST stem, not the shortest. The trim-to-shortest rule exists
+    to make Σstems line up with the publisher master; no master is involved here, so a
+    window in the tail of a long 판소리 가야금 stem is legitimate content and is kept.
+    Stems that have already ended simply read as zeros there.
+    """
+    song_id: str
+    genre_sub: str
+    entries_by_class: dict
+    joint_segments: np.ndarray
+    max_frames: int
+
+
+class CoherentPlan(NamedTuple):
+    """Everything one coherent mix does, decided before any audio is read.
+
+    `picks` is [(output slot, class name, source entry, linear gain)] and `start_frame`
+    applies to ALL of them — the temporal alignment that makes the mix coherent.
+    `active_classes` is what the window offered, so the gap between it and `picks`
+    records how much of the ensemble the n-draw left out.
+    """
+    song: "SongEntry"
+    start_frame: int
+    active_classes: list
+    picks: list
+    swap_channels: bool
+    eq_boards: list
 
 
 # --- EQ augmentation (reimplemented from the Embracing Cacophony recipe) -----
@@ -190,15 +254,16 @@ class GugakMixDataset(torch.utils.data.Dataset):
 
         self.pool = self._build_source_pool()
         self.density_values, self.density_probs = self._build_density_histogram()
+        # the song pool costs a manifest regroup, so it is built only when it can be
+        # drawn from — a pure-incoherent run pays nothing for the feature existing
+        self.songs = (self._build_song_pool() if cfg.coherent_mix_prob > 0.0 else [])
 
     # --- reserved-knob guard ---
     @staticmethod
     def _reject_unimplemented(cfg: MixDatasetConfig) -> None:
         """Reserved config keys exist so the vocabulary is stable; using one fails loudly."""
-        if cfg.coherent_mix_prob > 0.0:
-            raise NotImplementedError(
-                "coherent_mix_prob > 0: coherent same-song draws (incl. 판소리 "
-                "trim-to-shortest) are designed but not implemented yet")
+        if not 0.0 <= cfg.coherent_mix_prob <= 1.0:
+            raise ValueError(f"coherent_mix_prob={cfg.coherent_mix_prob}: expected [0, 1]")
         if any(int(n) > 1 for n in cfg.multi_sample.values()):
             raise NotImplementedError(
                 "multi_sample > 1: 타악-2×-style multi-sampling is a reserved seam")
@@ -211,30 +276,41 @@ class GugakMixDataset(torch.utils.data.Dataset):
                 "'song_base' (summed same-base stems) is a reserved seam")
 
     # --- init-time table work (no audio) ---
-    def _build_source_pool(self) -> dict:
-        """Per-class draw lists: (paths, frame counts, active segments) from the manifests."""
+    def _load_pool_tables(self) -> tuple[pd.DataFrame, dict]:
+        """The two manifest reads both pools need: drawable sources + their activity.
+
+        Kept separate so the per-class pool and the per-song pool are built from ONE
+        read of each table and cannot drift apart in their filtering.
+        """
         manifest = pd.read_parquet(self.root / self.cfg.source_manifest)
         sources = manifest[(manifest.dataset.isin(self.cfg.datasets))
                            & (manifest.split == self.cfg.split)
                            & (manifest.role != "master")
                            & (manifest.stem_group.isin(self.cfg.classes))]
-
         segments = pd.read_parquet(self.root / self.cfg.activity_segments)
         segments_by_file = {fid: grp[["start_s", "end_s"]].to_numpy()
                             for fid, grp in segments.groupby("file_id")}
+        return sources, segments_by_file
+
+    def _make_entry(self, row) -> SourceEntry | None:
+        """One manifest row → a drawable SourceEntry, or None if it has no activity."""
+        file_segments = self._segments_by_file.get(row.file_id)
+        if file_segments is None or len(file_segments) == 0:
+            return None         # fully-silent file: nothing to draw (QC says none exist)
+        source_lufs = (self.loudness_sampler.source_loudness(row.file_id)
+                       if self.loudness_sampler is not None else math.nan)
+        return SourceEntry(row.out_path, int(row.out_frames), file_segments,
+                           row.dataset, source_lufs, int(row.out_channels))
+
+    def _build_source_pool(self) -> dict:
+        """Per-class draw lists: (paths, frame counts, active segments) from the manifests."""
+        self._sources, self._segments_by_file = self._load_pool_tables()
 
         pool: dict = {}
-        for class_name, group in sources.groupby("stem_group"):
-            entries = []
-            for row in group.itertuples():
-                file_segments = segments_by_file.get(row.file_id)
-                if file_segments is None or len(file_segments) == 0:
-                    continue    # fully-silent file: nothing to draw (QC says none exist)
-                source_lufs = (self.loudness_sampler.source_loudness(row.file_id)
-                               if self.loudness_sampler is not None else math.nan)
-                entries.append(SourceEntry(row.out_path, int(row.out_frames),
-                                           file_segments, row.dataset, source_lufs,
-                                           int(row.out_channels)))
+        for class_name, group in self._sources.groupby("stem_group"):
+            entries = [entry for entry in
+                       (self._make_entry(row) for row in group.itertuples())
+                       if entry is not None]
             pool[class_name] = entries
 
         missing = [c for c in self.cfg.classes if not pool.get(c)]
@@ -242,6 +318,48 @@ class GugakMixDataset(torch.utils.data.Dataset):
             raise ValueError(f"no drawable sources for classes {missing} "
                              f"(datasets={self.cfg.datasets}, split={self.cfg.split})")
         return pool
+
+    def _build_song_pool(self) -> list:
+        """Per-song draw list for coherent mixes — the same sources, regrouped by song.
+
+        Only song-keyed rows qualify: the 71470 solo clips are standalone phrases with no
+        song to be coherent WITH (`song_id` is null for them), so they cannot take part in
+        a coherent draw and are dropped here rather than silently mis-grouped. A run that
+        wants both a solo pool and coherent mixes has to say what that means first.
+
+        Songs contributing only one drawable stem are kept: a coherent 1-stem mix is a
+        real solo passage, and the incoherent path keeps n=1 for the same reason.
+        """
+        song_rows = self._sources[self._sources.song_id.notna()]
+        dropped = self._sources.song_id.isna().sum()
+        if dropped and self.cfg.coherent_mix_prob > 0.0:
+            datasets = sorted(self._sources[self._sources.song_id.isna()].dataset.unique())
+            raise ValueError(
+                f"coherent_mix_prob>0 but {dropped} drawable sources from datasets "
+                f"{datasets} have no song_id — coherent draws need songs. Restrict "
+                "gugak_mix.datasets to song-keyed sets, or set coherent_mix_prob: 0.0")
+
+        songs = []
+        for song_id, group in song_rows.groupby("song_id"):
+            entries_by_class: dict = {}
+            for row in group.itertuples():
+                entry = self._make_entry(row)
+                if entry is not None:
+                    entries_by_class.setdefault(row.stem_group, []).append(entry)
+            if not entries_by_class:
+                continue        # every stem silent (QC says this does not happen)
+            all_entries = [e for entries in entries_by_class.values() for e in entries]
+            songs.append(SongEntry(
+                song_id=str(song_id),
+                genre_sub=str(group.genre_sub.iloc[0]),
+                entries_by_class=entries_by_class,
+                joint_segments=np.concatenate([e.segments for e in all_entries]),
+                max_frames=max(e.out_frames for e in all_entries)))
+
+        if not songs:
+            raise ValueError("coherent_mix_prob>0 but no drawable songs "
+                             f"(datasets={self.cfg.datasets}, split={self.cfg.split})")
+        return songs
 
     def _build_density_histogram(self) -> tuple[np.ndarray, np.ndarray]:
         """The distribution n is drawn from — (values, probabilities) over class counts.
@@ -304,34 +422,60 @@ class GugakMixDataset(torch.utils.data.Dataset):
                       class_name: str) -> tuple[np.ndarray, SourceEntry]:
         """One activity-aware excerpt of a random source of `class_name` → (2, chunk).
 
-        A random active segment is chosen duration-weighted, an anchor point drawn
-        inside it, and the window placed uniformly at random over positions containing
-        the anchor — so every excerpt overlaps real activity, but silence around short
-        segments stays in (silence is a valid signal when deliberate). Sources shorter
-        than the window are zero-padded at the tail; mono sources are center-duplicated
-        to stereo (never naive-summed — anti-phase rule). The entry it came from is
-        returned alongside, since the gain treatment depends on which pool that is.
+        The incoherent draw: a random file of the class, then a random activity-anchored
+        window inside it (→ `_draw_window_start`). The entry it came from is returned
+        alongside, since the gain treatment depends on which pool that is.
         """
         entry = self.pool[class_name][rng.integers(len(self.pool[class_name]))]
-        out_path, total_frames, segments = entry.out_path, entry.out_frames, entry.segments
+        start_frame = self._draw_window_start(rng, entry.segments, entry.out_frames)
+        return self._read_window(entry, start_frame), entry
 
+    def _draw_window_start(self, rng: np.random.Generator, segments: np.ndarray,
+                           total_frames: int) -> int:
+        """Activity-aware window start, in frames, from a pool of active segments.
+
+        One segment is chosen duration-weighted, an anchor point drawn inside it, and the
+        window placed uniformly at random over positions containing the anchor — so every
+        window overlaps real activity, but silence around short segments stays in
+        (silence is a valid signal when deliberate).
+
+        The incoherent path passes ONE stem's segments; the coherent path passes the
+        pooled segments of a whole song. Identical arithmetic either way, which is what
+        makes "the same activity-aware logic, evaluated jointly" literally true.
+
+        Args:
+            rng: the item's Generator.
+            segments: (n, 2) array of [start_s, end_s] active spans.
+            total_frames: length of the source (or, for a song, its longest stem).
+        """
         durations = segments[:, 1] - segments[:, 0]
         segment = segments[rng.choice(len(segments), p=durations / durations.sum())]
         anchor_s = rng.uniform(segment[0], segment[1])
         start_s = anchor_s - rng.uniform(0.0, self.cfg.segment_seconds)
         max_start = max(0, total_frames - self.chunk_frames)
-        start_frame = int(np.clip(round(start_s * self.cfg.sample_rate), 0, max_start))
+        return int(np.clip(round(start_s * self.cfg.sample_rate), 0, max_start))
 
+    def _read_window(self, entry: SourceEntry, start_frame: int) -> np.ndarray:
+        """Read one (2, chunk) excerpt at a given frame offset.
+
+        Sources shorter than the window are zero-padded at the tail; mono sources are
+        center-duplicated to stereo (never naive-summed — anti-phase rule). A start
+        beyond the file's end returns silence outright: in a coherent draw every stem
+        reads the SAME offset, and a stem that has already finished genuinely has no
+        content there.
+        """
+        if start_frame >= entry.out_frames:
+            return np.zeros((2, self.chunk_frames), dtype=np.float32)
         audio, sample_rate = soundfile.read(
-            self.root / out_path, start=start_frame, frames=self.chunk_frames,
+            self.root / entry.out_path, start=start_frame, frames=self.chunk_frames,
             dtype="float32", always_2d=True, fill_value=0.0)   # fill pads short reads
         if sample_rate != self.cfg.sample_rate:
-            raise ValueError(f"{out_path}: sr {sample_rate} != {self.cfg.sample_rate} "
-                             "(ingest store contract broken)")
+            raise ValueError(f"{entry.out_path}: sr {sample_rate} != "
+                             f"{self.cfg.sample_rate} (ingest store contract broken)")
         audio = audio.T                                        # -> (channels, frames)
         if audio.shape[0] == 1:
             audio = np.repeat(audio, 2, axis=0)                # centered mono
-        return audio, entry
+        return audio
 
     def _draw_stem_gain(self, rng: np.random.Generator, class_name: str,
                         entry: SourceEntry) -> float:
@@ -406,10 +550,130 @@ class GugakMixDataset(torch.utils.data.Dataset):
             stems, mixture = stems * scale, mixture * scale
         return stems, mixture
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
-        # independent, reproducible stream per (seed, item) — worker-count-agnostic
-        rng = np.random.default_rng([self.cfg.seed, index])
+    # --- coherent draw (one song, one offset) ---
+    @staticmethod
+    def _window_coverage(segments: np.ndarray, window_start_s: float,
+                         window_end_s: float) -> float:
+        """Fraction of the window this source's active segments cover, in [0, 1]."""
+        overlap = np.minimum(segments[:, 1], window_end_s) - np.maximum(segments[:, 0],
+                                                                       window_start_s)
+        return float(np.clip(overlap, 0.0, None).sum()) / (window_end_s - window_start_s)
 
+    def _active_classes_in_window(self, song: SongEntry,
+                                  start_frame: int) -> dict:
+        """Which of the song's classes are audible in this window → {class: [entries]}.
+
+        "Audible" reuses the project's existing definition — activity covering more than
+        `density_coverage_threshold` of the window, the same test `chunk_activities` and
+        the measured density mode apply. A class qualifies if at least one of its files
+        clears the bar, and only the files that clear it are drawable, so a selected
+        class is always one that actually plays here.
+
+        Fallback: if nothing clears the threshold (possible — the window is anchored on
+        activity, but a short segment can cover less than a quarter of 10 s), the single
+        best-covered file is used. That keeps every mix non-silent, matching the standing
+        "skip n=0, keep n=1" rule, rather than emitting a training example of nothing.
+        """
+        window_start_s = start_frame / self.cfg.sample_rate
+        window_end_s = window_start_s + self.cfg.segment_seconds
+
+        active: dict = {}
+        best_class, best_entry, best_coverage = None, None, -1.0
+        for class_name, entries in song.entries_by_class.items():
+            for entry in entries:
+                coverage = self._window_coverage(entry.segments, window_start_s,
+                                                 window_end_s)
+                if coverage > self.cfg.density_coverage_threshold:
+                    active.setdefault(class_name, []).append(entry)
+                if coverage > best_coverage:
+                    best_class, best_entry, best_coverage = class_name, entry, coverage
+        if not active:
+            active = {best_class: [best_entry]}
+        return active
+
+    def _plan_coherent(self, rng: np.random.Generator) -> CoherentPlan:
+        """Decide everything about one coherent mix, without touching a single audio file.
+
+        The draw, in order: song uniform over the train songs · window from the song's
+        JOINT activity · which classes are audible there · n uniform over
+        1..len(audible) · that many classes without replacement · one file per class ·
+        per-stem gain · one per-mix L/R swap decision · per-stem EQ.
+
+        Split out from the audio work so that verification and characterisation can pull
+        hundreds of thousands of draws through the REAL sampling code rather than a
+        reimplementation of it — the statistics reported for this arm describe the
+        sampler that trains it, by construction (→ scripts/verify_coherent_sampler.py).
+
+        Two properties this deliberately does NOT have. Class frequency is not uniform —
+        it follows real 편성, so 해금 appears far more than 양금; correcting for it would
+        undo the coherence. And n does not follow exp002's flat 1..9 — songs carrying
+        few classes cap it low, so the realised distribution leans sparse. Both are
+        measured and reported rather than engineered away.
+        """
+        song = self.songs[rng.integers(len(self.songs))]
+        start_frame = self._draw_window_start(rng, song.joint_segments, song.max_frames)
+        active = self._active_classes_in_window(song, start_frame)
+
+        # n uniform over 1..audible — the min(n_classes, ...) cap is automatic, since a
+        # song can never make more classes audible than the scheme models.
+        # sorted() rather than dict order: the draw must not depend on insertion order.
+        active_classes = sorted(active)
+        n_classes = int(rng.integers(1, len(active_classes) + 1))
+        chosen = rng.choice(len(active_classes), size=n_classes, replace=False)
+
+        picks = []
+        for pick in chosen:
+            class_name = active_classes[pick]
+            candidates = active[class_name]
+            # one file per class slot, matching exp002's draw_unit: file — a song with
+            # 피리1+피리2 contributes one of them, not their sum (→ launch report)
+            entry = candidates[rng.integers(len(candidates))]
+            picks.append((self.cfg.classes.index(class_name), class_name, entry,
+                          float(self._draw_stem_gain(rng, class_name, entry))))
+
+        # L/R swap PER MIX, not per stem: one decision for the whole ensemble preserves
+        # its spatial image
+        swap_channels = bool(rng.random() < self.cfg.channel_swap_prob)
+        eq_boards = [build_random_eq(rng, self.cfg.eq_stem_gain_db, q_max=5.0)
+                     if rng.random() < self.cfg.eq_stem_prob else None
+                     for _ in picks]
+        return CoherentPlan(song=song, start_frame=start_frame,
+                            active_classes=active_classes, picks=picks,
+                            swap_channels=swap_channels, eq_boards=eq_boards)
+
+    def _coherent_item(self, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+        """One coherent mix: every stem read from one song at one time offset."""
+        plan = self._plan_coherent(rng)
+
+        stems = np.zeros((len(self.cfg.classes), 2, self.chunk_frames), dtype=np.float32)
+        for slot, _class_name, entry, gain in plan.picks:
+            # the SAME start_frame for every stem — this is the whole point of the arm
+            stems[slot] = self._read_window(entry, plan.start_frame) * np.float32(gain)
+        if plan.swap_channels:
+            # applied to all slots at once; undrawn slots are zeros, so it is a no-op
+            stems = stems[:, ::-1].copy()
+        for (slot, _class_name, _entry, _gain), board in zip(plan.picks, plan.eq_boards):
+            if board is not None:
+                stems[slot] = board(stems[slot], self.cfg.sample_rate)
+        return stems, np.array([slot for slot, _, _, _ in plan.picks])
+
+    def plan_item(self, index: int) -> CoherentPlan | None:
+        """Provenance of item `index` — the coherent plan, or None if it drew incoherent.
+
+        Runs the identical RNG sequence `__getitem__` runs, so the plan it returns is the
+        one that item really uses; it just stops before any audio is read. Verification
+        and characterisation entry point.
+
+        Args:
+            index: the dataset index, exactly as the DataLoader would pass it.
+        """
+        rng = np.random.default_rng([self.cfg.seed, index])
+        if self.cfg.coherent_mix_prob > 0.0 and rng.random() < self.cfg.coherent_mix_prob:
+            return self._plan_coherent(rng)
+        return None
+
+    def _incoherent_item(self, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+        """One incoherent mix: n classes, each from an independent song and offset."""
         n_classes = int(rng.choice(self.density_values, p=self.density_probs))
         drawn = rng.choice(len(self.cfg.classes), size=n_classes, replace=False)
 
@@ -418,6 +682,18 @@ class GugakMixDataset(torch.utils.data.Dataset):
             class_name = self.cfg.classes[slot]
             excerpt, entry = self._draw_excerpt(rng, class_name)
             stems[slot] = self._augment_stem(rng, excerpt, class_name, entry)
+        return stems, drawn
+
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
+        # independent, reproducible stream per (seed, item) — worker-count-agnostic
+        rng = np.random.default_rng([self.cfg.seed, index])
+
+        # short-circuit: at p=0.0 no random number is drawn here, so a pure-incoherent
+        # run's stream is bit-identical to one that predates coherent mixing
+        if self.cfg.coherent_mix_prob > 0.0 and rng.random() < self.cfg.coherent_mix_prob:
+            stems, drawn = self._coherent_item(rng)
+        else:
+            stems, drawn = self._incoherent_item(rng)
 
         if rng.random() < self.cfg.eq_mixbus_prob:
             # one shared EQ over every stem: linear, so the mixture hears the same EQ

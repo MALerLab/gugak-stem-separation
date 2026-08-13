@@ -61,15 +61,25 @@ def main() -> None:
     ap.add_argument("--checkpoint", required=True)
     ap.add_argument("--steps", type=int, default=4, help="loader steps (default: one accum cycle)")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--model_type", default="htdemucs",
+                    help="MSST model family — must match the launch script's --model_type")
+    ap.add_argument("--batch_size", type=int, default=None,
+                    help="override training.batch_size (batch-sizing sweeps only)")
+    ap.add_argument("--assert_fp32_spectral", action="store_true",
+                    help="record every torch.stft/istft call and fail if any ran in "
+                         "reduced precision (spectral-model gate)")
     args = ap.parse_args()
 
     torch.manual_seed(args.seed)
-    raw = yaml.safe_load((REPO_ROOT / args.config).read_text(encoding="utf-8"))
+    # FullLoader, not safe_load: roformer configs carry !!python/tuple values, and this
+    # is the loader MSST itself uses (utils/settings.load_config)
+    with open(REPO_ROOT / args.config, encoding="utf-8") as handle:
+        raw = yaml.load(handle, Loader=yaml.FullLoader)
     training = raw["training"]
 
     # --- model, built by MSST so parameter names match training exactly ---
     from utils.settings import get_model_from_config
-    model, config = get_model_from_config("htdemucs", str(REPO_ROOT / args.config))
+    model, config = get_model_from_config(args.model_type, str(REPO_ROOT / args.config))
     state = torch.load(REPO_ROOT / args.checkpoint, map_location="cpu")
     model.load_state_dict(state)          # strict: mirrors --load_only_compatible_weights
     device = torch.device("cuda")
@@ -87,8 +97,25 @@ def main() -> None:
         raise SystemExit("FAIL: GradScaler is live under bf16")
     print(f"[amp] inference_amp_dtype={training.get('inference_amp_dtype', '<unset>')}")
 
+    # --- spectral-precision probe: wrap torch.stft/istft and record what dtype each
+    # call actually received. The project rule is that spectral transforms never run in
+    # reduced precision, and in a spectral-only model that transform IS the model, so
+    # this is checked directly rather than inferred from the autocast config. ---
+    spectral_dtypes: list = []
+    if args.assert_fp32_spectral:
+        real_stft, real_istft = torch.stft, torch.istft
+
+        def record(name, fn):
+            def wrapped(input, *a, **kw):
+                spectral_dtypes.append((name, input.dtype))
+                return fn(input, *a, **kw)
+            return wrapped
+
+        torch.stft = record("stft", real_stft)
+        torch.istft = record("istft", real_istft)
+
     # --- data: the real dataset, the real batch size ---
-    batch_size = int(training["batch_size"])
+    batch_size = int(args.batch_size or training["batch_size"])
     accumulation = int(training["gradient_accumulation_steps"])
     dataset = GugakMixDataset(MixDatasetConfig.from_mapping(dict(raw["gugak_mix"])),
                              REPO_ROOT, num_items=args.steps * batch_size)
@@ -125,6 +152,20 @@ def main() -> None:
                   f"clip={training['grad_clip']} finite={torch.isfinite(grad_norm).item()}")
             if not torch.isfinite(grad_norm):
                 raise SystemExit("FAIL: non-finite gradient norm")
+
+    if args.assert_fp32_spectral:
+        # complex64 IS the fp32 complex type (a pair of fp32), and it is what istft
+        # consumes; the failures we are guarding against are float16/bfloat16/complex32
+        full_precision = {torch.float32, torch.complex64, torch.float64, torch.complex128}
+        seen = sorted({f"{n}:{d}" for n, d in spectral_dtypes})
+        bad = sorted({f"{n}:{d}" for n, d in spectral_dtypes if d not in full_precision})
+        print(f"\n[spectral] {len(spectral_dtypes)} torch.stft/istft calls, "
+              f"input dtypes seen: {seen}")
+        if not spectral_dtypes:
+            raise SystemExit("FAIL: no spectral calls recorded — probe did not fire")
+        if bad:
+            raise SystemExit(f"FAIL: spectral transform ran in reduced precision: {bad}")
+        print("[spectral] PASS — every STFT/iSTFT ran on fp32 input")
 
     nonfinite_params = sum(int((~torch.isfinite(p)).sum()) for p in model.parameters())
     print(f"\n[result] non-finite steps: {nonfinite_steps} / {args.steps}")

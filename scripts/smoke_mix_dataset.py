@@ -43,7 +43,10 @@ def main() -> None:
     ap.add_argument("--out", default="data/mix_smoke")
     args = ap.parse_args()
 
-    raw = yaml.safe_load((REPO_ROOT / args.config).read_text())
+    # FullLoader, not safe_load: roformer configs carry !!python/tuple values, and this
+    # is the loader MSST itself uses (utils/settings.load_config)
+    with open(REPO_ROOT / args.config, encoding="utf-8") as handle:
+        raw = yaml.load(handle, Loader=yaml.FullLoader)
     cfg = MixDatasetConfig.from_mapping(raw["gugak_mix"])
     dataset = GugakMixDataset(cfg, REPO_ROOT, num_items=args.items)
     print(f"pool: " + " · ".join(f"{c}:{len(dataset.pool[c])}" for c in cfg.classes))
