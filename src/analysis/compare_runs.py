@@ -43,6 +43,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
+import yaml
 from omegaconf import OmegaConf
 
 DEFAULT_SETTINGS_PATH = "configs/analysis/compare_runs.yaml"
@@ -146,9 +147,15 @@ def steps_per_eval(config_path: Path) -> int:
     """
     # OmegaConf, not yaml.safe_load — MSST loads htdemucs configs through OmegaConf, and
     # plain YAML 1.1 misreads unpunctuated scientific notation (`1e-3` becomes a string).
-    config = OmegaConf.load(config_path)
-    loader_steps = int(config.training.num_steps)
-    accumulation = int(config.training.get("gradient_accumulation_steps", 1))
+    # BS-RoFormer configs carry `!!python/tuple` tags OmegaConf rejects; for those fall
+    # back to PyYAML's FullLoader (MSST's own loader for that family) — the two integer
+    # keys read here are immune to the YAML 1.1 scalar issue.
+    try:
+        training = OmegaConf.load(config_path).training
+    except yaml.constructor.ConstructorError:
+        training = yaml.load(Path(config_path).read_text(), Loader=yaml.FullLoader)["training"]
+    loader_steps = int(training["num_steps"])
+    accumulation = int(training.get("gradient_accumulation_steps", 1))
     return loader_steps // accumulation
 
 
