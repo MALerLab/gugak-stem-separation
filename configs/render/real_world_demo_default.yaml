@@ -1,0 +1,26 @@
+# configs/render/real_world_demo_default.yaml — default render job for src/render_demo.py.
+# One YAML = one render job; copy + edit for a different checkpoint or clip set.
+#
+# Real-world demo clips (data/gugak_demo_set/v1/final) have NO ground truth, so this job
+# writes mixture + predicted stems only — listening material, no SI-SDR. Inputs are the
+# `_normalised` clips: already at the −19 LUFS the models trained on, 44.1 kHz, PCM_24.
+#
+# Baseline: BS-RoFormer pilot (exp003.0), newest checkpoint at time of writing. The pilot
+# is still training — bump `checkpoint` when a better epoch lands (the checkpoint's epoch
+# is stamped into the output folder name so renders from different epochs never collide).
+
+checkpoint: experiments/exp003.0_260809_bsroformer_pilot/checkpoints/model_bs_roformer_ep_25_si_sdr_9.9413.ckpt
+model_config: configs/exp003.0_bsroformer_pilot.yaml
+model_type: bs_roformer            # MSST model key — must match the model config
+run_label: exp003.0                # prefix of the output folder: <run_label>_ep<N>/
+
+# --- inputs ---
+input_glob: data/gugak_demo_set/v1/final/*_normalised.wav
+clip_name_strip_suffix: _normalised   # dropped from the clip name used for output folders
+
+# --- outputs (server NVMe via the data/ symlink; audio never enters the repo) ---
+output_root: data/gugak_demo_set/v1/renders
+audio:
+  format: MP3                      # size + compatibility over fidelity for meeting playback
+  compression_level: 0.4           # libsndfile MP3 quality knob, 0 = best/biggest … 1 = worst/smallest
+  write_mixture: true              # re-emit the input alongside the stems for one-folder listening
