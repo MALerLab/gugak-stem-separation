@@ -1,0 +1,127 @@
+# demo_set_v1.yaml — real-world demo pool for QUALITATIVE evaluation (no ground truth,
+# no SDR). Consumed by scripts/build_demo_set_candidates.py (stage 1: acquire → ingest →
+# QC → candidate excerpts). Stage 2 (freeze → manifests/demo_sets/v1) is a separate step
+# and only happens after listening. Change values here, not code.
+#
+# ⚠️ Audio never enters the repo. Everything under storage_root stays on server NVMe;
+#    the manifest carries URLs + timestamps so the set is rebuildable from links.
+
+# --- storage (outside the repo; `~` is expanded) ---
+storage_root: ~/storage/gugak-demo-set/v1     # raw/ ingest/ candidates/ provenance/
+out_candidates: manifests/demo_sets/v1_candidates   # basename → .parquet + .csv beside it
+
+# --- shared knobs ---
+excerpt_s: 30.0                # every candidate is a 30 s window
+ingest_config: configs/ingest.yaml   # SAME channel-rule / DC / resample / peak-clamp knobs
+
+# --- Part A: external items (YouTube, best audio-only stream, no re-encode) ---
+# raw/<slot>.<ext> is what yt-dlp fetched; ingest/<slot>.wav is 44.1 kHz PCM_24 via the
+# standard ingest ops. Stored files are NOT loudness-normalised (−19 LUFS happens at
+# inference time, same as training).
+external:
+  slot2:
+    url: https://www.youtube.com/watch?v=73E8ZL0CdG0
+    video_id: 73E8ZL0CdG0
+    short_title: 국립국악원 토요명품공연 2015.07.11
+    setting: live hall, multiple pieces
+    num_candidates: 6
+    spread_across_pieces: true       # ≥2 distinct programme pieces
+    section: null                    # whole video
+  slot3:
+    url: https://www.youtube.com/watch?v=SbcDnHV3DC0
+    video_id: SbcDnHV3DC0
+    short_title: 대취타 — 한국음악의 향연 제6회
+    setting: outdoor, winds + unpitched percussion
+    num_candidates: 5
+    spread_across_pieces: false
+    section: null
+  slot4:
+    url: https://www.youtube.com/watch?v=Ap1HjKR4Z88
+    video_id: Ap1HjKR4Z88
+    short_title: 국립국악관현악단 3분 관현악 — 해금 협주곡 '끝없이 하늘 끝으로'
+    setting: concert hall, orchestra + 해금 solo
+    num_candidates: 4
+    spread_across_pieces: false
+    section: {start_s: 130.0, end_s: 186.0}   # 02:10 → 03:06 (next programme item)
+  slot5:
+    url: https://www.youtube.com/watch?v=9aFwc2nRQN4
+    video_id: 9aFwc2nRQN4
+    short_title: 판소리 춘향가 중 사랑가 — 한국음악의 향연 제1회
+    setting: voice + 북 only
+    num_candidates: 5
+    spread_across_pieces: false
+    section: null
+
+# --- candidate-window heuristic (PROPOSES; the listener's ear is the gate) ---
+# Selection is by exclusion: reject windows with dead air; rank the rest by tonality
+# (low spectral flatness = pitched playing; applause / crowd noise / hall ambience read
+# as flat). Applause vs percussion is NOT separable this way — expect confusions.
+heuristic:
+  hop_s: 5.0                 # window start stride
+  block_s: 0.5               # analysis block for RMS / flatness
+  dead_air_block_s: 1.0      # any 1 s stretch below dead_air_dbfs → window rejected
+  dead_air_dbfs: -55.0       # (ingested files are un-normalised; hall floor sits ~−60)
+  flatness_band_hz: [200, 8000]
+  fft_size: 2048
+  min_gap_between_picks_s: 30.0   # picks inside one piece must not overlap
+  edge_margin_s: 5.0         # never start inside the first/last 5 s of the file
+  overlap_allowed_if_section_short: true   # slot 4: 56 s section → overlapping windows
+
+# --- QC flags (typical of the ensemble dataset — Dataset 1 QC) ---
+qc_flags:
+  expect_channels: 2
+  lr_corr_typical: [0.80, 0.995]   # ensemble masters: median ≈ 0.96
+  lufs_typical: [-25.0, -13.0]     # ensemble masters ≈ −19 LUFS
+
+# --- Part B: dataset items (slot 1) — in-domain control, publisher MASTER variant ---
+# Selection references manifests ONLY (never a model output or score).
+slot1:
+  split: test
+  source_manifest: manifests/parquet/source_manifest_v2.parquet
+  eval_manifest: manifests/parquet/eval_manifest.parquet
+  chunk_activities: manifests/parquet/chunk_activities.parquet
+  chunk_len_s: 3.0             # finest chunk grid → 10 chunks per 30 s window
+  coverage_threshold: 0.25     # a class is "audible" in a chunk if active >25 % of it
+  # audible density = mean over chunks of Σ per-class coverage (simultaneously-active
+  # modelled classes, continuous). The binary >25 % count saturates (every 산조 = 2.00 at
+  # 10 s), so it cannot rank "closest to median"; it is still what the class-COUNT
+  # criterion (풍류음악) and the per-window audible-class listing use.
+  modelled_classes: [가야금, 거문고, 기타, 대금, 아쟁, 양금, 타악기, 피리, 해금]
+  min_song_duration_s: 120.0   # room for a 30 s excerpt well away from head and tail
+  edge_margin_s: 30.0          # excerpt may not start/end inside the first/last 30 s
+  windows_per_song: 2
+  shortlist_per_genre: 5
+  exclude_num_ids: ["0714", "0885", "0886", "0905"]           # publisher defects / benign oddity
+  exclude_pinned_listening: ["0631", "0854", "0006", "0721", "0196"]  # pinned listening set
+  genres:
+    산조:  {criterion: closest_to_genre_median_density, tag: sanjo}
+    풍류음악: {criterion: audible_class_count_in_range, target_range: [4, 5], tag: pungnyu}
+
+# --- Stage 2: freeze (picks made by listening, 2026-08-17) -------------------------------
+# One item per slot (two for slot 1). Each pick is a candidate_file from v1_candidates.
+# Output: <storage_root>/final/<name>.wav (as-is, byte-copy of the candidate) +
+# <name>_normalised.wav (what people actually listen to) + manifests/demo_sets/v1.{parquet,csv}.
+freeze:
+  final_dir: final
+  out_manifest: manifests/demo_sets/v1
+  normalised_suffix: _normalised
+  # normalisation = the inference-time rule (mix_dataset._normalize): integrated loudness →
+  # target_lufs with one gain, then peak-guard to peak_ceiling. So the _normalised file IS
+  # the model's input; the as-is file keeps the real-world level for reference.
+  target_lufs: -19.0
+  peak_ceiling: 0.99
+  picks:
+    slot1_sanjo:   slot1_sanjo_0253_c02_0302-0332.wav
+    slot1_pungnyu: slot1_pungnyu_0113_c01_0103-0133.wav
+    slot2:         slot2_c02_2605-2635.wav
+    slot3:         slot3_c02_0105-0135.wav
+    slot4:         slot4_c04_0235-0305.wav
+    slot5:         slot5_c01_0105-0135.wav
+  # listener notes → selection_note column (kept short; the point is provenance)
+  notes:
+    slot1_sanjo:   "listened 2026-08-17: good. 거문고 산조, density 1.73 vs genre median 1.835 (shortlist #2)"
+    slot1_pungnyu: "listened 2026-08-17: good. in-range quartet (4 audible classes), shortlist #1"
+    slot2:         "listened 2026-08-17: good, quiet as-is → hence the _normalised twin for all items. NB dual-mono source collapsed to 1ch by the standard ingest rule"
+    slot3:         "listened 2026-08-17: good"
+    slot4:         "listened 2026-08-17: good. 해금 concerto section is only 56 s (highlights reel); windows overlapped"
+    slot5:         "listened 2026-08-17: good. voice + 북 — no voice class in the 9-class scheme"

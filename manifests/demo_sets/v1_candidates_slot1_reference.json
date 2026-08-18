@@ -1,0 +1,21 @@
+[
+  {
+    "genre": "산조",
+    "num_test_songs": 30,
+    "genre_median_density_all_test": 1.835,
+    "num_eligible": 18,
+    "genre_median_density_eligible": 1.6625
+  },
+  {
+    "genre": "풍류음악",
+    "num_test_songs": 16,
+    "genre_median_density_all_test": 5.9345,
+    "num_eligible": 14,
+    "genre_median_density_eligible": 5.7885,
+    "target_range": [
+      4,
+      5
+    ],
+    "num_in_range": 3
+  }
+]

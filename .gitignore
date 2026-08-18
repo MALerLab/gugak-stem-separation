@@ -10,6 +10,11 @@ __pycache__/
 #     Leading slash anchors to repo root so src/data/ is unaffected. ---
 /data/gugak_ensemble_71955
 /data/gugak_solo_71470
+# demo pool (data/gugak_demo_set → ~/storage/gugak-demo-set): incl. YouTube-sourced audio,
+# never ours to commit — the manifest under manifests/demo_sets/ is the tracked record.
+/data/gugak_demo_set
+# demo-set manifests: parquet is canonical; the CSV twins are eyeball copies, regenerable
+manifests/demo_sets/*.csv
 
 # --- figs/: generated plots, ignored wholesale — png archive only, kept on disk ---
 figs/
