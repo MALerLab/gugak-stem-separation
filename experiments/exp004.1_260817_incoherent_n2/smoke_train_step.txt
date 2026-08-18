@@ -1,0 +1,23 @@
+  scaler = torch.cuda.amp.GradScaler(enabled=(amp_name != "bfloat16"))
+[model] loaded experiments/exp004.1_260817_incoherent_n2/checkpoints/start_checkpoint.ckpt strictly into the configured model
+[model] sources: 9 | params: 41,996,006
+[amp] use_amp=True amp_dtype=bfloat16 grad_scaler_enabled=False
+[amp] inference_amp_dtype=float32
+[data] batch 8 x accum 4 = effective 32 | density_mode=uniform
+  with torch.cuda.amp.autocast(enabled=use_amp, dtype=amp_dtype):
+  with torch.cuda.amp.autocast(enabled=False):
+  with torch.cuda.amp.autocast(enabled=False):
+[step 0] loss=0.014816 finite=True
+[step 1] loss=0.014399 finite=True
+[step 2] loss=0.015603 finite=True
+[step 3] loss=0.015230 finite=True
+[optimizer step] grad_norm(pre-clip)=0.0137 clip=5.0 finite=True
+
+[spectral] 8 torch.stft/istft calls, input dtypes seen: ['istft:torch.complex64', 'stft:torch.float32']
+[spectral] PASS — every STFT/iSTFT ran on fp32 input
+
+[result] non-finite steps: 0 / 4
+[result] non-finite parameters after the update: 0
+[result] peak GPU memory: 36.99 GiB
+
+SMOKE PASSED

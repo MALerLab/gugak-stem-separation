@@ -1,0 +1,25 @@
+reference : wandb/offline-run-20260813_103716-21200npo  (config as logged at launch)
+candidate : configs/exp004.1_htdemucs_incoherent_n2.yaml
+
+119 leaf fields compared · 6 differ
+
+  [expected  ] gugak_mix.anchor_selection
+      reference: <absent>
+      candidate: 'uniform'
+  [expected  ] gugak_mix.cluster_min_melodic
+      reference: <absent>
+      candidate: 2
+  [expected  ] gugak_mix.cluster_shared_channel_swap
+      reference: <absent>
+      candidate: True
+  [expected  ] gugak_mix.cluster_shared_gain
+      reference: <absent>
+      candidate: False
+  [expected  ] gugak_mix.density_uniform_min
+      reference: <absent>
+      candidate: 2
+  [expected  ] training.run_name
+      reference: 'exp002.4_260813_seed45'
+      candidate: 'exp004.1_260817_incoherent_n2'
+
+✅ PASS — exactly the 6 declared field(s) differ

@@ -1,0 +1,42 @@
+config configs/exp004_htdemucs_coherent_p1_uniform.yaml: p=1.0 mode=uniform n_min=2 min_melodic=2 seed=45
+
+CORRECTNESS vs manifest
+  [PASS] class_mismatch: 0
+  [PASS] cluster_below_min_melodic: 0
+  [PASS] cluster_multi_offset: 0
+  [PASS] cluster_multi_song: 0
+  [PASS] cluster_song_vs_plan: 0
+  [PASS] excluded_file: 0
+  [PASS] quarantined: 0
+  [PASS] structure: 0
+  [PASS] unknown_path: 0
+  [PASS] wrong_dataset: 0
+  [PASS] wrong_split: 0
+
+G1 exposure: mean rate 0.6114 vs expected 0.6111 (E[n]/9 with n~U{2..9} = 5.5/9) · max deviation 0.28% · PASS
+    가야금    0.6115
+    거문고    0.6115
+    기타     0.6131
+    대금     0.6117
+    아쟁     0.6099
+    양금     0.6108
+    타악기    0.6108
+    피리     0.6116
+    해금     0.6119
+
+G5 clusters below melodic minimum: 0 across 200,000 draws · PASS
+
+n support [2, 3, 4, 5, 6, 7, 8, 9] (expected 2..9) · mean n 5.5027 (expected 5.5)
+E[k] declared 5.5027 · realised 5.0587 · ratio 0.919
+shortfall rate 40.4% · reasons {'r1_dropped': 72770, 'no_eligible_anchor': 8013}
+H_melodic mean 0.6339 · P(H_melodic=1) 0.297 · H mean 0.6341
+clusters/draw mean 1.384 · P(0 clusters) 2.748%
+cluster size share: 2:38.8% 3:17.8% 4:13.4% 5:10.9% 6:9.3% 7:7.7% 8:1.6% 9:0.4%
+cluster genre share: 창작국악:33.8% 판소리:30.0% 풍류음악:19.9% 민요:8.2% 궁중음악:6.3% 대풍류:1.8%
+plan time 107 µs/mix median · pool 676 songs / 4250 files
+
+G4 audio: decoding 300 items through a real DataLoader ...
+  mixture ≡ Σ(targets): max abs error 2.384e-07 · PASS
+  silent slots: 1057 by tolerance (1057 by equality) · worst residue 0.000e+00 · 2.59 items/s
+
+LAUNCH SAMPLER GATES: PASS

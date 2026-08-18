@@ -1,0 +1,8 @@
+post-launch 2026-08-17T10:14:26+09:00
+0, 48135 MiB, 100 %
+1, 40743 MiB, 99 %
+2, 40741 MiB, 92 %
+GPU-2b2a8eed-0731-48d1-1846-cce3232aef4a, 95210, 48124 MiB
+GPU-fa9a15db-66e3-c2ee-766f-88ba13b56e35, 144922, 40724 MiB
+GPU-0747e718-ad87-5e3a-8032-ca84ed01776a, 156730, 40722 MiB
+uv wrapper pid 156726 · python pid 156730 · tmux exp004_1

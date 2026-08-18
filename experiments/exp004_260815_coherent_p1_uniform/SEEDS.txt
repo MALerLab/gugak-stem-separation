@@ -1,0 +1,34 @@
+exp004_260815_coherent_p1_uniform — all randomness surfaces, as prepared 2026-08-15
+
+The seed is ONE knob with THREE surfaces. All three sit at 45.
+
+  surface                     value  where it is declared
+  --------------------------  -----  --------------------------------------------------
+  1. mix draw stream             45  configs/exp004_htdemucs_coherent_p1_uniform.yaml : gugak_mix.seed
+                                     (this stream now also drives n, S, k, anchor and
+                                     cluster-offset draws — the anchor-cluster sampler)
+  2. trainer global (torch/np)   45  launch.sh : --seed 45   (data order + torch RNG)
+  3. output-head init            45  REUSED from exp002.4: its start_checkpoint.ckpt
+                                     (built by scripts/init_start_checkpoint.py --seed 45
+                                     on 2026-08-13) byte-copied into
+                                     checkpoints/start_checkpoint.ckpt
+                                     sha256 d2f4f9408ef2a8c3ae4b02fb97f64b9a703cbb3189a5972f1cca7cf1e88d5a65
+                                     -> verify_start_checkpoint.py: 533 tensors, 529 trunk
+                                        bit-identical to pretrained htdemucs, 4 heads
+                                        bit-identical to torch.manual_seed(45) fresh init
+                                     -> checkpoint_init_log_from_exp002.4.txt = the builder's
+                                        own log ("seed (head init): 45", 529 / 4)
+
+⚠️ Seed 45 is SHARED with exp002.4 (the running incoherent seed twin). Same head init,
+same trainer seed, same gugak_mix.seed — but the sampler consumes randomness differently
+(n ~ U{2..9}, then S, then k, anchors, offsets), so the two runs do NOT see the same data.
+Holding the seed removes seed as an explanatory variable between exp004 and exp002.4;
+it does not make the draw streams comparable item-for-item.
+
+Sibling arms, for reference:
+  exp002    (260805)  all three surfaces = 42   (terminal ep12 collapse, stopped ep32)
+  exp002.1  (260806)  all three surfaces = 43   (recovered, finished +3.9880 @ ep59)
+  exp002.2  (260806)  all three surfaces = 42   song-first coherent p=1.0 (collapsed, stopped ep48)
+  exp002.3  (260809)  all three surfaces = 44   (recovered, finished best +4.6557 @ ep58)
+  exp002.4  (260813)  all three surfaces = 45   (running, GPU 2)
+  exp004    (260815)  all three surfaces = 45   anchor-cluster coherent p=1.0 uniform  <- this run

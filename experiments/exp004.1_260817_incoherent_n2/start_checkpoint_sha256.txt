@@ -1,0 +1,3 @@
+d2f4f9408ef2a8c3ae4b02fb97f64b9a703cbb3189a5972f1cca7cf1e88d5a65  /home/jae.gye/storage/gugak-stemsep-experiments/exp002.4_260813_seed45/checkpoints/start_checkpoint.ckpt
+d2f4f9408ef2a8c3ae4b02fb97f64b9a703cbb3189a5972f1cca7cf1e88d5a65  experiments/exp004.1_260817_incoherent_n2/checkpoints/start_checkpoint.ckpt
+d2f4f9408ef2a8c3ae4b02fb97f64b9a703cbb3189a5972f1cca7cf1e88d5a65  /home/jae.gye/storage/gugak-stemsep-experiments/exp004_260815_coherent_p1_uniform/checkpoints/start_checkpoint.ckpt

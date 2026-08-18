@@ -1,0 +1,8 @@
+tensors: 533 total | 529 trunk (529 bit-identical to pretrained) | 4 heads
+  head decoder.3.conv_tr.weight (48, 36, 8, 1)
+  head decoder.3.conv_tr.bias (36,)
+  head tdecoder.3.conv_tr.weight (48, 18, 8)
+  head tdecoder.3.conv_tr.bias (18,)
+heads bit-identical to torch.manual_seed(45) fresh init: 4/4  {'decoder.3.conv_tr.weight': True, 'decoder.3.conv_tr.bias': True, 'tdecoder.3.conv_tr.weight': True, 'tdecoder.3.conv_tr.bias': True}
+vs seed-44 start checkpoint: SKIPPED (file pruned since exp002.4's check)
+START-CHECKPOINT GATE: PASS

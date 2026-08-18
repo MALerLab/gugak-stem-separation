@@ -1,0 +1,83 @@
+{
+  "config": "configs/exp004.1_htdemucs_incoherent_n2.yaml",
+  "grid_draws": 200000,
+  "audio_items": 300,
+  "manifest": {
+    "manifest": "manifests/parquet/source_manifest_v2.parquet",
+    "v1_rows": 16615,
+    "v2_rows": 16599,
+    "excluded_file_ids": 16,
+    "excluded_in_pool": [],
+    "pool_songs": 676,
+    "pool_files": 4250
+  },
+  "density": {
+    "support": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "expected_support": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "draws_at_n1": 0,
+    "below_floor": 0,
+    "shares": {
+      "2": 0.126105,
+      "3": 0.12479,
+      "4": 0.12345,
+      "5": 0.12423,
+      "6": 0.12528,
+      "7": 0.124935,
+      "8": 0.125925,
+      "9": 0.125285
+    },
+    "expected_share": 0.125,
+    "max_rel_deviation": 0.012399999999999967,
+    "mean_n": 5.50272,
+    "expected_mean_n": 5.5
+  },
+  "coherent_path": {
+    "draws_with_clusters": 0,
+    "total_clusters": 0,
+    "k_declared_max": 0,
+    "k_realised_max": 0,
+    "k_target_max": 0.0,
+    "shortfall_reasons": {},
+    "cluster_records": 0,
+    "h_all_nan": false,
+    "h_mel_all_nan": false
+  },
+  "violations": {
+    "structure": 0,
+    "cluster_below_min_melodic": 0,
+    "unknown_path": 0,
+    "class_mismatch": 0,
+    "quarantined": 0,
+    "excluded_file": 0,
+    "wrong_split": 0,
+    "wrong_dataset": 0,
+    "cluster_multi_song": 0,
+    "cluster_multi_offset": 0,
+    "cluster_song_vs_plan": 0
+  },
+  "g1_mean_rate": 0.6114133333333335,
+  "g1_expected_rate": 0.6111111111111112,
+  "g1_max_rel_deviation": 0.0027586357292390673,
+  "g1_pass": true,
+  "g4_sum_error": 2.384185791015625e-07,
+  "g4_pass": true,
+  "failures": []
+}

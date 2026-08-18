@@ -1,0 +1,44 @@
+config configs/exp004.1_htdemucs_incoherent_n2.yaml: p=0.0 mode=uniform n_min=2 min_melodic=2 seed=45
+
+MANIFEST v2 / exclusions (pool level)
+  manifest manifests/parquet/source_manifest_v2.parquet: v1 16615 rows → v2 16599 rows · excluded file_ids (v1−v2) 16 (expected 16)
+  pool 676 songs / 4250 files (expected 676 / 4250)
+  excluded file_ids present in pool: 0 · PASS
+
+D density (n ~ U{2..9}, 200,000 draws): support [2, 3, 4, 5, 6, 7, 8, 9] (expected [2, 3, 4, 5, 6, 7, 8, 9]) · draws at n=1: 0 · below floor: 0
+  per-size share (expected 0.1250 each): 2:0.1261 3:0.1248 4:0.1235 5:0.1242 6:0.1253 7:0.1249 8:0.1259 9:0.1253
+  max relative deviation from uniform 1.24% (gate < 2%) · mean n 5.5027 (expected 5.5) · PASS
+
+C coherent path never entered: draws with ≥1 cluster 0 · clusters total 0 · k_declared max 0 · k_realised max 0 · k_target max 0.0 · shortfall reasons {} · H all-NaN False · PASS
+
+CORRECTNESS vs manifest (pick level, 200,000 draws)
+  [PASS] class_mismatch: 0
+  [PASS] cluster_below_min_melodic: 0
+  [PASS] cluster_multi_offset: 0
+  [PASS] cluster_multi_song: 0
+  [PASS] cluster_song_vs_plan: 0
+  [PASS] excluded_file: 0
+  [PASS] quarantined: 0
+  [PASS] structure: 0
+  [PASS] unknown_path: 0
+  [PASS] wrong_dataset: 0
+  [PASS] wrong_split: 0
+  (note: the cell runner's own `excluded_file` counter reads a yaml key that does not exist and is vacuous — the pool-level check above is the real one)
+
+G1 exposure: mean rate 0.6114 vs expected 0.6111 (E[n]/9 with n~U{2..9} = 5.5/9) · max deviation 0.28% · PASS
+    가야금    0.6115
+    거문고    0.6115
+    기타     0.6131
+    대금     0.6117
+    아쟁     0.6099
+    양금     0.6108
+    타악기    0.6108
+    피리     0.6116
+    해금     0.6119
+plan time 100 µs/mix median · pool 676 songs / 4250 files
+
+G4 audio: decoding 300 items through a real DataLoader ...
+  mixture ≡ Σ(targets): max abs error 2.384e-07 · PASS
+  silent slots: 1057 by tolerance (1057 by equality) · worst residue 0.000e+00 · 1.90 items/s
+
+LAUNCH SAMPLER GATES: PASS

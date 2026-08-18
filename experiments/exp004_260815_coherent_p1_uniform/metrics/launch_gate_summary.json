@@ -1,0 +1,65 @@
+{
+  "config": "configs/exp004_htdemucs_coherent_p1_uniform.yaml",
+  "grid_draws": 200000,
+  "audio_items": 300,
+  "g1_mean_rate": 0.6114133333333335,
+  "g1_expected_rate": 0.6111111111111112,
+  "g1_max_rel_deviation": 0.0027586357292390673,
+  "g1_pass": true,
+  "g5_below_min_melodic": 0,
+  "violations": {
+    "structure": 0,
+    "cluster_below_min_melodic": 0,
+    "unknown_path": 0,
+    "class_mismatch": 0,
+    "quarantined": 0,
+    "excluded_file": 0,
+    "wrong_split": 0,
+    "wrong_dataset": 0,
+    "cluster_multi_song": 0,
+    "cluster_multi_offset": 0,
+    "cluster_song_vs_plan": 0
+  },
+  "n_support": [
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "n_mean": 5.50272,
+  "k_declared_mean": 5.50272,
+  "k_realised_mean": 5.05874,
+  "shortfall_rate": 0.403915,
+  "shortfall_reasons": {
+    "r1_dropped": 72770,
+    "no_eligible_anchor": 8013
+  },
+  "h_melodic_mean": 0.633929431438446,
+  "p_h_melodic_1": 0.2968129026287512,
+  "clusters_per_draw": 1.38362,
+  "cluster_size_share": {
+    "2": 0.3883436203581908,
+    "3": 0.17844133504864051,
+    "4": 0.1336530261198884,
+    "5": 0.10912678336537489,
+    "6": 0.09337101227215565,
+    "7": 0.07699729694569318,
+    "8": 0.01590393316083896,
+    "9": 0.0041629927292175595
+  },
+  "cluster_genre_share": {
+    "창작국악": 0.3383985487344791,
+    "판소리": 0.29966320232433763,
+    "풍류음악": 0.1993358002919877,
+    "민요": 0.08182521212471633,
+    "궁중음악": 0.06279542070799786,
+    "대풍류": 0.017981815816481405
+  },
+  "g4_sum_error": 2.384185791015625e-07,
+  "g4_pass": true,
+  "failures": []
+}

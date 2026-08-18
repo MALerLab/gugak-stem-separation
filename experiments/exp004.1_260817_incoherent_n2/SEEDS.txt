@@ -1,0 +1,49 @@
+exp004.1_260817_incoherent_n2 — all randomness surfaces, as prepared 2026-08-17
+
+The seed is ONE knob with THREE surfaces. All three sit at 45 — SHARED with exp002.4 and
+exp004. That sharing is load-bearing: the 2×2 (coherence × density floor) compares three
+arms that start from the same output-head init and the same trainer seed.
+
+  surface                     value  where it is declared
+  --------------------------  -----  --------------------------------------------------
+  1. mix draw stream             45  configs/exp004.1_htdemucs_incoherent_n2.yaml : gugak_mix.seed
+                                     (drives n, S and every incoherent stem's file/offset/
+                                     gain/swap draw; the anchor/cluster draws never happen
+                                     at p=0 — 0 clusters in 200,000 draws, launch_gates.txt)
+  2. trainer global (torch/np)   45  launch.sh : --seed 45   (data order + torch RNG)
+  3. output-head init            45  REUSED from exp002.4: its start_checkpoint.ckpt
+                                     (built by scripts/init_start_checkpoint.py --seed 45
+                                     on 2026-08-13; the SAME file exp004 reused) byte-copied
+                                     into checkpoints/start_checkpoint.ckpt
+                                     sha256 d2f4f9408ef2a8c3ae4b02fb97f64b9a703cbb3189a5972f1cca7cf1e88d5a65
+                                     (identical on exp002.4's, exp004's and this copy)
+                                     -> verify_start_checkpoint.py: 533 tensors, 529 trunk
+                                        bit-identical to pretrained htdemucs, 4 heads
+                                        bit-identical to torch.manual_seed(45) fresh init;
+                                        533/533 tensors bit-identical to a FRESH seed-45
+                                        rebuild (init_start_checkpoint.py --seed 45, this
+                                        config) and to exp002.4's / exp004's copies
+                                     -> checkpoint_init_log_from_exp002.4.txt = the builder's
+                                        own log ("seed (head init): 45", 529 / 4)
+
+⚠️ Same seed ≠ same data. exp004.1 and exp004 draw the SAME n and class set S for every
+item index (n and S are drawn before p is consulted — the launch gates reproduce exp004's
+n-histogram and per-class exposure to four digits), but from there exp004 spends RNG on
+anchors/clusters and exp004.1 does not, so the streams diverge within the item. exp004.1
+vs exp002.4 share the incoherent per-stem RNG order but n ~ U{2..9} vs U{1..9} shifts
+which item draws what. Holding the seed removes seed as an explanatory variable between
+the three arms; it does not make the draw streams comparable item-for-item.
+
+The 2×2, all at seed 45:
+                         incoherent (p=0)          coherent (p=1.0 uniform)
+  n ~ U{1..9}            exp002.4 (finished +4.80)  —
+  n ~ U{2..9}            exp004.1  <- this run      exp004 (running, GPU 1)
+
+Sibling arms, for reference:
+  exp002    (260805)  all three surfaces = 42   (terminal ep12 collapse, stopped ep32)
+  exp002.1  (260806)  all three surfaces = 43   (recovered, finished +3.9880 @ ep59)
+  exp002.2  (260806)  all three surfaces = 42   song-first coherent p=1.0 (collapsed, stopped ep48)
+  exp002.3  (260809)  all three surfaces = 44   (recovered, finished best +4.6557 @ ep58)
+  exp002.4  (260813)  all three surfaces = 45   incoherent n>=1 (finished, never broke, +4.8039 @ ep59)
+  exp004    (260815)  all three surfaces = 45   anchor-cluster coherent p=1.0 uniform, n>=2 (running, GPU 1)
+  exp004.1  (260817)  all three surfaces = 45   incoherent n>=2  <- this run

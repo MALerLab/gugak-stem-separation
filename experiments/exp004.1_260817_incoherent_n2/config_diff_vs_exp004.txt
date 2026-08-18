@@ -1,0 +1,13 @@
+reference : wandb/offline-run-20260815_201100-4932rh1e  (config as logged at launch)
+candidate : configs/exp004.1_htdemucs_incoherent_n2.yaml
+
+119 leaf fields compared · 2 differ
+
+  [expected  ] gugak_mix.coherent_mix_prob
+      reference: 1.0
+      candidate: 0.0
+  [expected  ] training.run_name
+      reference: 'exp004_260815_coherent_p1_uniform'
+      candidate: 'exp004.1_260817_incoherent_n2'
+
+✅ PASS — exactly the 2 declared field(s) differ
