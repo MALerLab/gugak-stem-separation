@@ -1,0 +1,25 @@
+# configs/analysis/plot_epoch_bars.yaml — config for src/analysis/plot_epoch_bars.py.
+# Promoted verbatim from the script's in-file Settings dataclass (2026-08-27);
+# every key is required — the script has no in-code defaults to fall back on.
+
+# run list + metric come from the curves config (single source for both figure scripts)
+curves_config: configs/analysis/plot_training_curves.yaml
+
+settings:
+  metric: si_sdr
+  metrics_dir: experiments/analysis/260817_training_curves/metrics
+  output_dir: experiments/analysis/260817_training_curves/figures
+  palette_path: configs/palette_dancheong.yaml
+  primary_run: exp003.0            # the run the figure is about; bars sorted by its values
+  reference_run: exp002.4          # drawn beside each primary bar; null = omit
+  per_stem_figure_name: epoch_bars_per_stem_si_sdr
+  per_stem_title: Per-stem validation SI-SDR at best epoch
+  per_stem_y_label: val SI-SDR (dB, Σstem, 91 songs)
+  per_genre_figure_name: epoch_bars_per_genre_si_sdr
+  per_genre_title: Per-genre validation SI-SDR at best epoch
+  per_genre_y_label: val SI-SDR (dB, Σstem, mean over stems)
+  bar_width: 0.38                  # per bar; two bars per group when a reference run is drawn
+  bar_gap: 0.03                    # surface gap between the two bars of a group (axis units)
+  value_label_font_size: 8.5
+  figure_size: [11.0, 6.0]
+  dpi: 160

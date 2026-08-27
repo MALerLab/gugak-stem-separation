@@ -1,0 +1,73 @@
+# configs/analysis/plot_training_curves.yaml — config for src/analysis/plot_training_curves.py.
+# Promoted verbatim from the script's in-file Run/Settings dataclasses (2026-08-27);
+# every settings key is required — the script has no in-code defaults to fall back on.
+
+# The seven runs of the 2026-08-17 meeting review, chronological. Colours follow this
+# order into the palette's validated slot order — reorder = repaint, so append only.
+# ⚠ palette has 8 slots and 7 are used: appending more than one run needs a fold/facet
+# decision first (assign_run_colors refuses to generate a 9th hue).
+# Per-run keys: label, experiment_dir, config_path required; status (default "finished")
+# and seed (default null, shown as `(s:N)` in legends) optional.
+runs:
+  - label: exp001
+    experiment_dir: experiments/exp001_260728_htdemucs_9stem
+    config_path: configs/exp001_htdemucs_9stem.yaml
+  - label: exp002
+    experiment_dir: experiments/exp002_260805_htdemucs_v2_uniform_n
+    config_path: configs/exp002_htdemucs_v2_uniform_n.yaml
+    seed: 42
+  - label: exp002.1
+    experiment_dir: experiments/exp002.1_260806_twin
+    config_path: configs/exp002.1_htdemucs_twin.yaml
+    seed: 43
+  - label: exp002.3
+    experiment_dir: experiments/exp002.3_260809_seed44
+    config_path: configs/exp002.3_htdemucs_seed44.yaml
+    seed: 44
+  - label: exp002.4
+    experiment_dir: experiments/exp002.4_260813_seed45
+    config_path: configs/exp002.4_htdemucs_seed45.yaml
+    seed: 45
+  - label: exp003.0
+    experiment_dir: experiments/exp003.0_260809_bsroformer_pilot
+    config_path: configs/exp003.0_bsroformer_pilot.yaml
+    # finished 2026-08-27 (was status: running at promotion time)
+  - label: exp004
+    experiment_dir: experiments/exp004_260815_coherent_p1_uniform
+    config_path: configs/exp004_htdemucs_coherent_p1_uniform.yaml
+    seed: 45
+    # finished 2026-08-19 (was status: running at promotion time)
+
+settings:
+  metric: si_sdr
+  x_axis: epoch                    # epoch | optimizer_steps
+  rolling_checkpoint_glob: "last_*.ckpt"
+  best_checkpoint_glob: "model_*_ep_*.ckpt"
+  palette_path: configs/palette_dancheong.yaml
+  output_dir: experiments/analysis/260817_training_curves
+  figure_name: training_curves_avg_si_sdr
+  title: Average validation SI-SDR per epoch
+  y_label: avg val SI-SDR (dB, Σstem, 91 songs)
+  # small multiples (per-stem AND per-genre): which runs to draw (labels from runs above;
+  # colours are still assigned over the FULL list so a subset never repaints a run)
+  panel_runs: [exp002, exp002.4, exp003.0, exp004]
+  per_stem_figure_name: training_curves_per_stem_si_sdr
+  per_stem_title: Per-stem validation SI-SDR per epoch
+  per_stem_y_label: val SI-SDR (dB, Σstem)
+  per_stem_grid: [3, 3]
+  per_stem_figure_size: [13.0, 10.0]
+  # per-genre needs song identity: the val tree MSST scored (its rglob order recovers
+  # which score belongs to which song) and the manifest that carries genre_sub
+  valid_root: data/gugak_ensemble_71955/sumstem_9stem/val
+  source_manifest_path: manifests/parquet/source_manifest.parquet
+  per_genre_figure_name: training_curves_per_genre_si_sdr
+  per_genre_title: Per-genre validation SI-SDR per epoch
+  per_genre_y_label: val SI-SDR (dB, Σstem, mean over stems)
+  per_genre_grid: [2, 4]
+  per_genre_figure_size: [16.0, 7.5]
+  x_labels: {epoch: epoch, optimizer_steps: optimizer steps}
+  legend_max_columns: 4            # figure-level legends wrap beyond this many entries
+  line_width: 2.0
+  marker_size: 9.0
+  figure_size: [11.0, 6.0]
+  dpi: 160

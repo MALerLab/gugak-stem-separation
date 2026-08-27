@@ -25,9 +25,9 @@ about. Every run here evaluates every 2,500 optimizer steps, so epoch and optimi
 are the same axis up to a constant; both columns are written to the parquet, and
 `Settings.x_axis` switches the figure between them.
 
-CONFIG SHAPE. `RUNS` and `Settings` below ARE the future YAML: promoting this script means
-moving them verbatim into `configs/analysis/plot_training_curves.yaml` and replacing the
-in-file constants with a loader — nothing else changes.
+CONFIG. `configs/analysis/plot_training_curves.yaml` — the run list (colour order:
+append only, reorder = repaint) and every figure knob. All settings keys are required;
+`load_config` is the only reader.
 
 USE AS A CLI:
     uv run python -m src.analysis.plot_training_curves
@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import argparse
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import koreanize_matplotlib  # noqa: F401 — registers a Korean-capable font with matplotlib
@@ -52,7 +52,7 @@ from src.analysis.read_msst_checkpoint import build_trajectory, eval_song_order
 matplotlib.use("Agg")
 
 
-# --- value objects (= the future YAML) ----------------------------------------------
+# --- config loading ----------------------------------------------------------------
 
 @dataclass(frozen=True)
 class Run:
@@ -66,61 +66,61 @@ class Run:
 
 @dataclass(frozen=True)
 class Settings:
-    """Every knob that decides how the figure is built. Mirrors the future YAML 1:1."""
-    metric: str = "si_sdr"
-    x_axis: str = "epoch"  # "epoch" | "optimizer_steps"
-    rolling_checkpoint_glob: str = "last_*.ckpt"
-    best_checkpoint_glob: str = "model_*_ep_*.ckpt"
-    palette_path: Path = Path("configs/palette_dancheong.yaml")
-    output_dir: Path = Path("experiments/analysis/260817_training_curves")
-    figure_name: str = "training_curves_avg_si_sdr"
-    title: str = "Average validation SI-SDR per epoch"
-    y_label: str = "avg val SI-SDR (dB, Σstem, 91 songs)"
-    # small multiples (per-stem AND per-genre): which runs to draw (labels from
-    # RUNS; colours are still assigned over the FULL list so a subset never repaints a run)
-    panel_runs: tuple[str, ...] = ("exp002", "exp002.4", "exp003.0", "exp004")
-    per_stem_figure_name: str = "training_curves_per_stem_si_sdr"
-    per_stem_title: str = "Per-stem validation SI-SDR per epoch"
-    per_stem_y_label: str = "val SI-SDR (dB, Σstem)"
-    per_stem_grid: tuple[int, int] = (3, 3)
-    per_stem_figure_size: tuple[float, float] = (13.0, 10.0)
-    # per-genre needs song identity: the val tree MSST scored (its rglob order recovers
-    # which score belongs to which song) and the manifest that carries genre_sub
-    valid_root: Path = Path("data/gugak_ensemble_71955/sumstem_9stem/val")
-    source_manifest_path: Path = Path("manifests/parquet/source_manifest.parquet")
-    per_genre_figure_name: str = "training_curves_per_genre_si_sdr"
-    per_genre_title: str = "Per-genre validation SI-SDR per epoch"
-    per_genre_y_label: str = "val SI-SDR (dB, Σstem, mean over stems)"
-    per_genre_grid: tuple[int, int] = (2, 4)
-    per_genre_figure_size: tuple[float, float] = (16.0, 7.5)
-    x_labels: dict = field(default_factory=lambda: {
-        "epoch": "epoch", "optimizer_steps": "optimizer steps"})
-    legend_max_columns: int = 4  # figure-level legends wrap beyond this many entries
-    line_width: float = 2.0
-    marker_size: float = 9.0
-    figure_size: tuple[float, float] = (11.0, 6.0)
-    dpi: int = 160
+    """Every knob that decides how the figure is built. Loaded 1:1 from the YAML —
+    no field has an in-code default, so the YAML stays the single source of values."""
+    metric: str
+    x_axis: str  # "epoch" | "optimizer_steps"
+    rolling_checkpoint_glob: str
+    best_checkpoint_glob: str
+    palette_path: Path
+    output_dir: Path
+    figure_name: str
+    title: str
+    y_label: str
+    panel_runs: tuple[str, ...]
+    per_stem_figure_name: str
+    per_stem_title: str
+    per_stem_y_label: str
+    per_stem_grid: tuple[int, int]
+    per_stem_figure_size: tuple[float, float]
+    valid_root: Path
+    source_manifest_path: Path
+    per_genre_figure_name: str
+    per_genre_title: str
+    per_genre_y_label: str
+    per_genre_grid: tuple[int, int]
+    per_genre_figure_size: tuple[float, float]
+    x_labels: dict
+    legend_max_columns: int
+    line_width: float
+    marker_size: float
+    figure_size: tuple[float, float]
+    dpi: int
 
 
-# The seven runs of the 2026-08-17 meeting review, chronological. Colours follow this
-# order into the palette's validated slot order — reorder = repaint, so append only.
-RUNS: tuple[Run, ...] = (
-    Run("exp001", Path("experiments/exp001_260728_htdemucs_9stem"),
-        Path("configs/exp001_htdemucs_9stem.yaml")),
-    Run("exp002", Path("experiments/exp002_260805_htdemucs_v2_uniform_n"),
-        Path("configs/exp002_htdemucs_v2_uniform_n.yaml"), seed=42),
-    Run("exp002.1", Path("experiments/exp002.1_260806_twin"),
-        Path("configs/exp002.1_htdemucs_twin.yaml"), seed=43),
-    Run("exp002.3", Path("experiments/exp002.3_260809_seed44"),
-        Path("configs/exp002.3_htdemucs_seed44.yaml"), seed=44),
-    Run("exp002.4", Path("experiments/exp002.4_260813_seed45"),
-        Path("configs/exp002.4_htdemucs_seed45.yaml"), seed=45),
-    Run("exp003.0", Path("experiments/exp003.0_260809_bsroformer_pilot"),
-        Path("configs/exp003.0_bsroformer_pilot.yaml"), status="running"),
-    Run("exp004", Path("experiments/exp004_260815_coherent_p1_uniform"),
-        Path("configs/exp004_htdemucs_coherent_p1_uniform.yaml"), status="running",
-        seed=45),
-)
+DEFAULT_CONFIG_PATH = Path("configs/analysis/plot_training_curves.yaml")
+
+# yaml scalars needing a typed container: repo-relative paths and fixed-size tuples
+SETTINGS_PATH_FIELDS = ("palette_path", "output_dir", "valid_root", "source_manifest_path")
+SETTINGS_TUPLE_FIELDS = ("panel_runs", "per_stem_grid", "per_stem_figure_size",
+                         "per_genre_grid", "per_genre_figure_size", "figure_size")
+
+
+def load_config(config_path: Path) -> tuple[tuple[Run, ...], Settings]:
+    """The YAML's run list and settings as typed objects. Paths stay repo-relative."""
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    runs = tuple(Run(label=entry["label"],
+                     experiment_dir=Path(entry["experiment_dir"]),
+                     config_path=Path(entry["config_path"]),
+                     status=entry.get("status", "finished"),
+                     seed=entry.get("seed"))
+                 for entry in raw["runs"])
+    values = dict(raw["settings"])
+    for field_name in SETTINGS_PATH_FIELDS:
+        values[field_name] = Path(values[field_name])
+    for field_name in SETTINGS_TUPLE_FIELDS:
+        values[field_name] = tuple(values[field_name])
+    return runs, Settings(**values)
 
 
 # --- reading -----------------------------------------------------------------------
@@ -559,6 +559,8 @@ def write_outputs(curves: pd.DataFrame, genre_curves: pd.DataFrame, summary: pd.
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--config", default=None,
+                        help=f"config YAML (default {DEFAULT_CONFIG_PATH})")
     parser.add_argument("--x-axis", choices=("epoch", "optimizer_steps"), default=None,
                         help="override Settings.x_axis")
     parser.add_argument("--output-dir", default=None, help="override Settings.output_dir")
@@ -567,15 +569,16 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     args = build_argument_parser().parse_args(argv)
-    settings = Settings()
+    root = find_repo_root()
+    config_path = Path(args.config) if args.config else root / DEFAULT_CONFIG_PATH
+    loaded_runs, settings = load_config(config_path)
     if args.x_axis:
         settings = replace(settings, x_axis=args.x_axis)
     if args.output_dir:
         settings = replace(settings, output_dir=Path(args.output_dir))
 
-    root = find_repo_root()
     runs = tuple(replace(run, experiment_dir=root / run.experiment_dir,
-                         config_path=root / run.config_path) for run in RUNS)
+                         config_path=root / run.config_path) for run in loaded_runs)
     palette = load_palette(root / settings.palette_path)
 
     curves, genre_curves = build_curves_tables(runs, settings, root)
