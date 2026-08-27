@@ -1,0 +1,25 @@
+# run_digest — one-glance status of live runs. `uv run scripts/run_digest.py` (no flags).
+# Read-only. Parses MSST train.log directly (no wandb, no scratchpad extractor).
+#
+# Epoch numbering = MSST's own 0-based index: "epN" in the digest is the epoch whose
+# eval produced checkpoint `model_*_ep_N_si_sdr_*.ckpt`. exp004 finished at ep59 = 60 epochs.
+#
+# runs: name → train.log path (glob allowed — launch-date folders are unknown ahead of time;
+#       if the glob matches nothing the run prints "no log yet").
+runs:
+  exp003.0: experiments/exp003.0_260809_bsroformer_pilot/train.log
+  exp004.1: experiments/exp004.1_260817_incoherent_n2/train.log
+  exp004:   experiments/exp004_260815_coherent_p1_uniform/train.log
+  exp003.1: experiments/exp003.1_260819_bsroformer_seed46/train.log
+  exp003.2: experiments/exp003.2_*/train.log
+
+# STALLED window = stalled_multiplier × that run's own median epoch wall-time.
+# Before a run has 2 finished epochs the median is unknown → stalled_fallback_hours is used.
+stalled_multiplier: 2.0
+stalled_fallback_hours: 3.0
+
+# HEAD flag: a per-stem val SI-SDR that fell more than this many dB below its own best.
+head_drop_db: 2.0
+
+# NaN flag scans this many bytes at the tail of the log for loss=nan / loss=inf.
+nan_tail_bytes: 2000000
