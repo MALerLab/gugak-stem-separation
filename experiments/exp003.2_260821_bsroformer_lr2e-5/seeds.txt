@@ -1,0 +1,19 @@
+exp003.2_260821_bsroformer_lr2e-5 — every source of randomness, pinned and recorded
+=================================================================================
+All three are 42 — exp003.0's OWN values, on purpose. lr (1e-5 → 2e-5) is the ONLY
+variable between exp003.0 and this run; the seed-twin question is exp003.1's (seed 46).
+
+1. HEAD (mask-estimator) INITIALISATION       seed 42  (INHERITED, not rebuilt)
+   checkpoints/start_checkpoint.ckpt is a byte copy of exp003.0's seed-42 start
+   checkpoint (cp -p, sha256 6f5cb3bd… recorded in start_checkpoint_sha256.txt and
+   re-verified by scripts/launch_exp003_2.sh at launch). Same trunk transfer, same 9
+   freshly initialised heads — the two runs start from IDENTICAL weights.
+
+2. MIX DRAW STREAM                            seed 42
+   configs/exp003.2_bsroformer_lr2e-5.yaml -> gugak_mix.seed: 42  (unchanged)
+
+3. TRAINER GLOBAL                             seed 42
+   experiments/exp003.2_260821_bsroformer_lr2e-5/launch.sh -> --seed 42  (unchanged)
+
+Not seeded, and deliberately so: cuDNN/cuBLAS kernel nondeterminism is left on, as in
+exp003.0. Same-seed runs agree closely but not bit-exactly.

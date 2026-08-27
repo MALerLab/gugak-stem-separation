@@ -1,0 +1,2 @@
+6f5cb3bd752b33d7f25bac953d8cc13ea85d73a59ede99b2d2f40e7b69c94a70  experiments/exp003.0_260809_bsroformer_pilot/checkpoints/start_checkpoint.ckpt
+6f5cb3bd752b33d7f25bac953d8cc13ea85d73a59ede99b2d2f40e7b69c94a70  /home/jae.gye/storage/gugak-stemsep-experiments/exp003.2_260821_bsroformer_lr2e-5/checkpoints/start_checkpoint.ckpt

@@ -1,0 +1,11 @@
+155625c0dcf68072286a336e58e89e94e78e312b
+?? configs/exp003.1_bsroformer_seed46.yaml
+?? configs/exp003.2_bsroformer_lr2e-5.yaml
+?? configs/run_digest.yaml
+?? experiments/exp003.1_260819_bsroformer_seed46/
+?? experiments/exp003.2_260821_bsroformer_lr2e-5/
+?? holiday_breadcrumbs.md
+?? scripts/launch_exp003_2.sh
+?? scripts/run_digest.py
+?? src/analysis/plot_epoch_bars.py
+dd1dae41b755f74f081ada1d24d5143675d83183

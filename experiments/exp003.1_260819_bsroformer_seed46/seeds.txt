@@ -1,0 +1,26 @@
+exp003.1_260819_bsroformer_seed46 — every source of randomness, pinned and recorded
+==================================================================================
+All three are 46 — exp003.0 ran 42 on all three. The seed is the ONLY difference between
+the two runs (data order, mix draws, head init all move together — total seed spread).
+
+1. HEAD (mask-estimator) INITIALISATION       seed 46
+   scripts/init_bsroformer_start_checkpoint.py --seed 46
+   Seeds torch's global RNG before the 9-stem model is constructed, which is what draws
+   the 9 freshly initialised per-source mask estimators (221,741,640 parameters, 87% of
+   the model). Verified reproducible: two independent builds at this seed are
+   bit-identical across all 2,595 tensors (--verify-twice). See checkpoint_init_log.txt.
+
+2. MIX DRAW STREAM                            seed 46
+   configs/exp003.1_bsroformer_seed46.yaml -> gugak_mix.seed: 46
+   Each dataset item draws from np.random.default_rng([seed, index]), so the stream is
+   per-item and independent of worker count. Governs: how many classes go in a mix,
+   which ones, which source file, which time window, per-stem gain, L/R swap.
+
+3. TRAINER GLOBAL                             seed 46
+   experiments/exp003.1_260819_bsroformer_seed46/launch.sh -> --seed 46
+   MSST's own initialize_environment seed (python/numpy/torch global RNGs for anything
+   the trainer itself does).
+
+Not seeded, and deliberately so: cuDNN/cuBLAS kernel nondeterminism is left on
+(deterministic algorithms would cost throughput; matches exp003.0). Two runs of this
+config will therefore agree closely but not bit-exactly on the loss curve.
