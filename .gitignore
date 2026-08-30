@@ -92,3 +92,7 @@ manifests/csv/*
 #     these are for thinking on, not for the record. Findings that survive graduate
 #     into the experiment's report or Notion. ---
 MEMO.md
+
+# ISMIR LBD paper lives in its own PRIVATE repo (gugak-stem-separation-paper);
+# never tracked here — this repo is public
+/paper/
