@@ -1,0 +1,28 @@
+# eval-job config — exp004 ep58 (HTDemucs partial-coherent), VAL, Σstem. Rows only —
+# the uSDR twin of the training-time val number the 2×2 comparison was measured on.
+#
+# Run:
+#   uv run python -m src.eval.runner --config configs/eval/exp004_val_sumstem.yaml
+
+run_id: eval_exp004_ep58_val_sumstem
+
+checkpoint: experiments/exp004_260815_coherent_p1_uniform/checkpoints/model_htdemucs_ep_58_si_sdr_6.7004.ckpt
+model_config: configs/exp004_htdemucs_coherent_p1_uniform.yaml
+model_type: htdemucs
+
+targets:
+  - {split: val, variant: sumstem}
+
+metrics: [si_sdr, usdr]
+usdr_eps: 1.0e-7
+metric_cap_db: 100.0
+silence_config: configs/silence.yaml
+eval_manifest: manifests/parquet/eval_manifest.parquet
+out_dir: experiments/exp004_260815_coherent_p1_uniform/eval
+seed: 42
+device: cuda:2
+
+render:
+  enabled: false
+  songs: []
+  out_dir: null

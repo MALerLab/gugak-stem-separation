@@ -1,0 +1,32 @@
+# eval-job config — exp003.0 ep59 (BS-RoFormer headline), TEST split, Σstem variant.
+# Persists the separated audio (preds only, FLAC PCM_24) — mixture + truths already
+# live in the Σstem test tree, so only pred_* files are written (~20 GB).
+#
+# Run:
+#   uv run python -m src.eval.runner --config configs/eval/exp003.0_test_sumstem.yaml
+
+run_id: eval_exp003.0_ep59_test_sumstem
+
+checkpoint: experiments/exp003.0_260809_bsroformer_pilot/checkpoints/model_bs_roformer_ep_59_si_sdr_10.7013.ckpt
+model_config: configs/exp003.0_bsroformer_pilot.yaml
+model_type: bs_roformer
+
+targets:
+  - {split: test, variant: sumstem}
+
+metrics: [si_sdr, usdr]
+usdr_eps: 1.0e-7
+metric_cap_db: 100.0
+silence_config: configs/silence.yaml
+eval_manifest: manifests/parquet/eval_manifest.parquet
+out_dir: experiments/exp003.0_260809_bsroformer_pilot/eval
+seed: 42
+device: cuda:0
+
+# persist every song's predictions — GPU allocation ends soon, so any future metric
+# (cSDR, SIR/SAR, oracle comparisons) must be computable CPU-only from these files
+render:
+  enabled: true
+  songs: all
+  preds_only: true
+  out_dir: experiments/exp003.0_260809_bsroformer_pilot/eval_renders

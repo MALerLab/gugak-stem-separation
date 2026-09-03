@@ -1,0 +1,32 @@
+# eval-job config — exp003.0 ep59, TEST split, MASTER variant (publisher master as
+# mixture; references summed on the fly from the ingested stems at native scale).
+# First full master-variant run — the path was previously smoke-tested only.
+# Persists preds (the master mixture lives in the ingest store; truths are re-summable
+# on CPU from the source manifest, so preds_only loses nothing).
+#
+# Run:
+#   uv run python -m src.eval.runner --config configs/eval/exp003.0_test_master.yaml
+
+run_id: eval_exp003.0_ep59_test_master
+
+checkpoint: experiments/exp003.0_260809_bsroformer_pilot/checkpoints/model_bs_roformer_ep_59_si_sdr_10.7013.ckpt
+model_config: configs/exp003.0_bsroformer_pilot.yaml
+model_type: bs_roformer
+
+targets:
+  - {split: test, variant: master}
+
+metrics: [si_sdr, usdr]
+usdr_eps: 1.0e-7
+metric_cap_db: 100.0
+silence_config: configs/silence.yaml
+eval_manifest: manifests/parquet/eval_manifest.parquet
+out_dir: experiments/exp003.0_260809_bsroformer_pilot/eval
+seed: 42
+device: cuda:1
+
+render:
+  enabled: true
+  songs: all
+  preds_only: true
+  out_dir: experiments/exp003.0_260809_bsroformer_pilot/eval_renders

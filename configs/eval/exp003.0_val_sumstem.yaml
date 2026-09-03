@@ -1,0 +1,53 @@
+# eval-job config — exp003.0 ep59, val split, Σstem variant (the dry run).
+#
+# One eval config = one scoring run = one long-format rows parquet. The scoring run
+# persists RAW per-(song, class) rows only; every aggregation (mean-of-class-means,
+# pooled, per-stem, per-genre) is computed afterwards by src/eval/aggregate.py
+# from that parquet — inference never re-runs for a different aggregation.
+#
+# Run:
+#   uv run python -m src.eval.runner --config configs/eval/exp003.0_val_sumstem.yaml
+
+run_id: eval_exp003.0_ep59_val_sumstem
+
+# --- model under evaluation (any past or future arm: point these three elsewhere) ---
+checkpoint: experiments/exp003.0_260809_bsroformer_pilot/checkpoints/model_bs_roformer_ep_59_si_sdr_10.7013.ckpt
+model_config: configs/exp003.0_bsroformer_pilot.yaml   # MSST config; also supplies
+                                                       # classes, sumstem tree root and
+                                                       # source manifest, so eval can
+                                                       # never read a different tree
+                                                       # than training did
+model_type: bs_roformer                                # MSST model key
+
+# --- what to score: any combination of split × variant, one pass per entry ---
+#   split:   val (91 songs) | test (135 songs)  — frozen eval_manifest, never regenerated
+#   variant: sumstem (our Σstem mix, mixture ≡ Σ targets, the model-selection variant)
+#          | master  (publisher master as mixture, raw ingested stems as references —
+#                     the real-world number, carries the irreducible mastering residual)
+targets:
+  - {split: val, variant: sumstem}
+
+# --- metrics (names from the src/eval/metrics.py registry; csdr is a registered stub) ---
+metrics: [si_sdr, usdr]
+usdr_eps: 1.0e-7          # uSDR eps, MDX'21 paper default. si_sdr keeps MSST's internal
+                          # 1e-8 verbatim — it must reproduce training-time numbers (G5)
+metric_cap_db: 100.0      # saturation cap: both metrics clamped here so a perfect
+                          # reconstruction reports +100.0 dB, never inf (see gate G1)
+
+silence_config: configs/silence.yaml   # single home of silence.absent_rms_dbfs
+
+# --- frozen split (read-only; genre_sub joined from here) ---
+eval_manifest: manifests/parquet/eval_manifest.parquet
+
+# --- output ---
+out_dir: experiments/exp003.0_260809_bsroformer_pilot/eval   # rows parquet + csv twin
+
+seed: 42
+device: cuda:0
+
+# --- optional listening render of a small named subset (NEVER the full run: 135 songs
+# × 9 stems at 44.1k/PCM_24 is multiple TB — scoring streams in memory instead) ---
+render:
+  enabled: false
+  songs: []               # e.g. [0010_정악_풍류음악]
+  out_dir: null           # required when enabled
