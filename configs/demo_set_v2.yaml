@@ -1,0 +1,259 @@
+# demo_set_v2.yaml — real-world demo pool v2 for QUALITATIVE evaluation (ISMIR LBD).
+# Consumed by scripts/build_demo_set_candidates.py (v2 path: sources/items model).
+# SELF-CONTAINED: carries all six v1 items (retagged, audio symlinked from v1 storage —
+# never re-acquired) plus the new items. v1 stays frozen on disk as a record.
+#
+# The v1 slot system is retired. Grain model:
+#   sources: one entry per MEDIA FILE (acquire/ingest grain, keyed by video_id) —
+#            several items may cut from one source (73E8ZL0CdG0 carries four).
+#   items:   one entry per DEMO ITEM (tagging/window grain) with the v2 tag columns:
+#            environment (hall|studio|outdoor|room) · ood (bool) · ood_reason
+#            (out_of_vocabulary|orchestral_doubling|missing_class|null) · tier
+#            (primary|backup). Backups are acquired/ingested/QC'd/windowed identically.
+#
+# ⚠️ Audio never enters the repo. Selection is by CONTENT CRITERIA ONLY — never model
+#    output, never a score, never inference. Stage 2 (freeze) only after listening.
+
+storage_root: ~/storage/gugak-demo-set/v2      # raw/ ingest/ candidates/ provenance/ final/
+out_items: manifests/demo_sets/v2              # item-level manifest (UNFROZEN until stage 2)
+out_candidates: manifests/demo_sets/v2_candidates
+v1_manifest: manifests/demo_sets/v1.parquet    # carried picks resolve against this
+v1_candidates_dir: ~/storage/gugak-demo-set/v1/candidates   # carried audio symlink source
+
+excerpt_s: 30.0
+ingest_config: configs/ingest.yaml             # SAME channel-rule / DC / resample / clamp
+
+environment_values: [hall, studio, outdoor, room]   # room = small natural-acoustic space
+ood_reasons: [out_of_vocabulary, orchestral_doubling, missing_class]
+
+# --- candidate-window heuristic (v1 rules, one change: OVER-GENERATE 8–12 per item) ---
+# Windows are proposed by EXCLUSION (dead air; flattest quarter = applause/ambience tail)
+# and spread across the item span by stratified bins — never clustered in one passage.
+heuristic:
+  hop_s: 5.0
+  block_s: 0.5
+  dead_air_block_s: 1.0
+  dead_air_dbfs: -55.0
+  flatness_band_hz: [200, 8000]
+  fft_size: 2048
+  edge_margin_s: 5.0
+  flatness_keep_quantile: 0.75    # v2: keep 3/4 of the pool (v1 kept the tonal half) —
+                                  # over-generation wants choice, the ear is the gate
+  activity_dbfs: -45.0            # block counts as "audible" above this (activity proxy)
+
+qc_flags:
+  expect_channels: 2
+  lr_corr_typical: [0.80, 0.995]
+  lufs_typical: [-25.0, -13.0]
+
+# --- sources (media grain; v1 reuse = symlinks laid down under video-id names) ---
+sources:
+  73E8ZL0CdG0: {url: "https://www.youtube.com/watch?v=73E8ZL0CdG0", from_v1: slot2}
+  SbcDnHV3DC0: {url: "https://www.youtube.com/watch?v=SbcDnHV3DC0", from_v1: slot3}
+  Ap1HjKR4Z88: {url: "https://www.youtube.com/watch?v=Ap1HjKR4Z88", from_v1: slot4}
+  9aFwc2nRQN4: {url: "https://www.youtube.com/watch?v=9aFwc2nRQN4", from_v1: slot5}
+  _opLG86rrtM: {url: "https://www.youtube.com/watch?v=_opLG86rrtM"}
+  WANUsKDUt84: {url: "https://www.youtube.com/watch?v=WANUsKDUt84"}
+  zTAWuGlw0z0: {url: "https://www.youtube.com/watch?v=zTAWuGlw0z0"}
+  Uwuw3hsPC4A: {url: "https://www.youtube.com/watch?v=Uwuw3hsPC4A"}
+  gTAK-O-ENAc: {url: "https://www.youtube.com/watch?v=gTAK-O-ENAc"}   # 360/VR upload;
+    # ambisonic gate verified 2026-08-30: ALL audio formats are plain 2ch (no 4ch stream)
+  dzfOA-2x4_M: {url: "https://www.youtube.com/watch?v=dzfOA-2x4_M"}
+  IDjzL4AXIJc: {url: "https://www.youtube.com/watch?v=IDjzL4AXIJc"}
+
+# --- dataset-item inputs (in-domain controls; store is already ingested + QC'd) ---
+dataset:
+  source_manifest: manifests/parquet/source_manifest_v2.parquet
+  eval_manifest: manifests/parquet/eval_manifest.parquet
+
+# --- items ---------------------------------------------------------------------------
+# carried_from_v1: item_key in v1.parquet → the listened v1 pick becomes candidate c01
+#                  (no re-windowing; the pick was already human-confirmed 2026-08-17).
+# piece:  chapter-title substring → window span clipped to that programme piece.
+# section: explicit analysis span override (seconds into the source file).
+# rank_by: loudness (default) | activity (sparse items: audible-activity fraction first).
+items:
+  sanjo_master_0253:
+    source: dataset          # publisher master, frozen test split
+    num_id: "0253"
+    tier: primary
+    environment: studio
+    ood: false
+    carried_from_v1: slot1_sanjo
+    short_title: 0253 민속악_산조 master (test)
+    notes_from_listening: "v1 pick, listened 2026-08-17: good. 거문고 산조, density 1.73 vs genre median 1.835 (shortlist #2)"
+  pungnyu_master_0113:
+    source: dataset
+    num_id: "0113"
+    tier: primary
+    environment: studio
+    ood: false
+    carried_from_v1: slot1_pungnyu
+    short_title: 0113 정악_풍류음악 master (test)
+    notes_from_listening: "v1 pick, listened 2026-08-17: good. in-range quartet (4 audible classes), shortlist #1"
+  salpuri:
+    source: 73E8ZL0CdG0
+    tier: primary
+    environment: hall
+    ood: false
+    carried_from_v1: slot2
+    piece: 살풀이
+    short_title: 살풀이 — 토요명품공연 2015.07.11
+    notes_from_listening: "v1 pick, listened 2026-08-17: good, quiet as-is → hence the _normalised twin for all items. NB dual-mono source collapsed to 1ch by the standard ingest rule"
+  daechwita:
+    source: SbcDnHV3DC0
+    tier: primary
+    environment: outdoor
+    ood: true
+    ood_reason: out_of_vocabulary
+    carried_from_v1: slot3
+    short_title: 대취타 — 한국음악의 향연 제6회
+    notes_from_listening: "v1 pick, listened 2026-08-17: good"
+  haegeum_concerto:
+    source: Ap1HjKR4Z88
+    tier: primary
+    environment: hall
+    ood: true
+    ood_reason: orchestral_doubling
+    carried_from_v1: slot4
+    short_title: 해금 협주곡 '끝없이 하늘 끝으로'
+    notes_from_listening: "v1 pick, listened 2026-08-17: good. 해금 concerto section is only 56 s (highlights reel); windows overlapped"
+  pansori:
+    source: 9aFwc2nRQN4
+    tier: primary
+    environment: hall            # INFERRED (L/R corr 0.93, −19 LUFS), not verified by eye
+    ood: true
+    ood_reason: missing_class
+    carried_from_v1: slot5
+    extra_qc_flags: [ENVIRONMENT_UNVERIFIED]
+    short_title: 판소리 춘향가 중 사랑가
+    notes_from_listening: "v1 pick, listened 2026-08-17: good. voice + 북 — no voice class in the 9-class scheme"
+
+  monggeumpo_taryeong:
+    source: 73E8ZL0CdG0
+    tier: primary
+    environment: hall
+    ood: false
+    piece: 몽금포타령
+    num_candidates: 10
+    short_title: 다섯악기를 위한 몽금포타령 — 토요명품공연 2015.07.11
+  janghanga:
+    source: 73E8ZL0CdG0
+    tier: primary
+    environment: hall
+    ood: false
+    piece: 장한가
+    num_candidates: 10
+    short_title: 장한가 — 토요명품공연 2015.07.11
+  jeongsangjigok:
+    source: 73E8ZL0CdG0
+    tier: primary
+    environment: hall
+    ood: false                   # sectional ×4 strings but all in-vocabulary → flagged, not ood
+    piece: 정상지곡
+    num_candidates: 10
+    extra_qc_flags: [SECTIONAL_DOUBLING]
+    short_title: 정상지곡 '도드리~상현도드리' — 토요명품공연 2015.07.11
+
+  yeongsanhoesang_hall:
+    source: _opLG86rrtM
+    tier: primary
+    environment: hall
+    ood: false
+    piece: 별곡
+    # HARD CONSTRAINT (watched by eye): everything after 32:00 is programme item 02
+    # (평조회상, full sectional 정악단) — never propose windows past it.
+    section: {start_s: 0.0, end_s: 1920.0}
+    num_candidates: 12
+    short_title: 정악풍류 별곡 — 국립국악원 정악단 정기공연 2018.09.21
+  geomungo_sanjo:
+    source: WANUsKDUt84
+    tier: primary
+    environment: studio
+    ood: false
+    num_candidates: 10
+    short_title: 박다울 — 한갑득류 거문고산조 (국설당)
+    notes_from_listening: "Mastering sounds clearly different from the NGC material. Lots of wood scratching noise from the 술대 and performer vocalisations — curious how those translate through the model."
+  gayageum_sanjo:
+    source: zTAWuGlw0z0
+    tier: primary
+    environment: hall
+    ood: false
+    num_candidates: 10
+    rank_by: activity            # sparse — rank windows by audible-activity fraction
+    extra_qc_flags: [VOCALISATIONS]   # 추임새 throughout; windows containing it are KEPT
+    short_title: 가야금산조 서공철류 — 토요명품공연 2018.12.08
+    notes_from_listening: "Sparse — activity scan matters more here than elsewhere. The drummer talks/accents (추임새) throughout. Not a disqualifier, but note it."
+  janggochum:
+    source: Uwuw3hsPC4A
+    tier: primary
+    environment: hall
+    ood: false
+    num_candidates: 10
+    analysis: [percussion_band]  # full percussion-band energy pass alongside standard QC
+    short_title: 장구춤 — 토요명품공연 2019.03.02
+    notes_from_listening: "Sounds really good. The drums sound really different — brutally raw, and the hall feels less than ideally treated. Good stress test for the percussion head, which is otherwise our elite stem (+20.39)."
+  sinawi:
+    source: gTAK-O-ENAc
+    tier: primary
+    environment: hall
+    ood: false
+    num_candidates: 8            # source is only 5:54 — windows will overlap
+    short_title: 시나위 — 국립국악원 360º VR
+  daepungnyu:
+    source: dzfOA-2x4_M
+    tier: backup
+    environment: hall
+    ood: false
+    num_candidates: 10
+    analysis: [tone_check]       # persistent narrowband squeal reported — measure it
+    short_title: 대풍류 — 토요명품공연 2015.04.04
+    notes_from_listening: "There's a high-pitched squeal running under the whole track. Commenters also report the mix is badly unbalanced — 해금 and 대금 hugely exaggerated, 피리 and 아쟁 essentially inaudible. One says it's effectively a 해금 recital with your eyes closed. Keeping it, but as backup only."
+  yeongsanhoesang_room:
+    source: IDjzL4AXIJc
+    tier: backup
+    environment: room            # 풍류사랑방 — natural-acoustic seated theatre, no PA
+    ood: false
+    num_candidates: 12
+    rank_by: activity            # extreme-slow sparse sustains — surface density per window
+    short_title: 김영헌의 영산회상 — 목요풍류 2015.07.16
+    notes_from_listening: "상령산 at extreme slow tempo — the pure heterophony stress case. NB source is the FULL 57:49 영산회상 suite (상령산~군악), not just 상령산; credits are a TRIO (대금·거문고·해금)."
+
+# --- Stage 2: freeze (picks made by listening, 2026-08-31) ---------------------------
+# One candidate per item. Output: <storage_root>/final/<name>.wav (as-is byte copy) +
+# <name>_normalised.wav (the inference-time −19 LUFS twin — what people listen to) +
+# the FROZEN item manifest at out_items (pick columns added). While this section exists,
+# the stage-1 path refuses to run so the frozen manifest can't be clobbered.
+freeze:
+  final_dir: final
+  normalised_suffix: _normalised
+  target_lufs: -19.0             # inference-time rule (mix_dataset._normalize)
+  peak_ceiling: 0.99
+  picks:                         # carried items keep their v1 picks (c01 by construction)
+    sanjo_master_0253:    sanjo_master_0253_c01_0302-0332.wav
+    pungnyu_master_0113:  pungnyu_master_0113_c01_0103-0133.wav
+    salpuri:              salpuri_c01_2605-2635.wav
+    daechwita:            daechwita_c01_0105-0135.wav
+    haegeum_concerto:     haegeum_concerto_c01_0235-0305.wav
+    pansori:              pansori_c01_0105-0135.wav
+    monggeumpo_taryeong:  monggeumpo_taryeong_c04_5016-5046.wav
+    janghanga:            janghanga_c02_5738-5808.wav
+    jeongsangjigok:       jeongsangjigok_c01_3547-3617.wav
+    yeongsanhoesang_hall: yeongsanhoesang_hall_c01_0055-0125.wav
+    geomungo_sanjo:       geomungo_sanjo_c02_0130-0200.wav
+    gayageum_sanjo:       gayageum_sanjo_c02_0350-0420.wav
+    janggochum:           janggochum_c01_0030-0100.wav
+    sinawi:               sinawi_c01_0030-0100.wav
+    daepungnyu:           daepungnyu_c01_0020-0050.wav
+    yeongsanhoesang_room: yeongsanhoesang_room_c02_0725-0755.wav
+  notes:
+    monggeumpo_taryeong:  "listened 2026-08-31: keep"
+    janghanga:            "listened 2026-08-31: keep"
+    jeongsangjigok:       "listened 2026-08-31: keep"
+    yeongsanhoesang_hall: "listened 2026-08-31: keep"
+    geomungo_sanjo:       "listened 2026-08-31: keep"
+    gayageum_sanjo:       "listened 2026-08-31: keep"
+    janggochum:           "listened 2026-08-31: keep"
+    sinawi:               "listened 2026-08-31: keep"
+    daepungnyu:           "listened 2026-08-31: keep (backup tier)"
+    yeongsanhoesang_room: "listened 2026-08-31: keep (backup tier); window inside 상령산"

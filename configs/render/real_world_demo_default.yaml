@@ -15,7 +15,7 @@ model_type: bs_roformer            # MSST model key — must match the model con
 run_label: exp003.0                # prefix of the output folder: <run_label>_ep<N>/
 
 # --- inputs ---
-input_glob: data/gugak_demo_set/v1/final/*_normalised.wav
+input_glob: data/gugak_demo_set/v1/final/normalised/*_normalised.wav
 clip_name_strip_suffix: _normalised   # dropped from the clip name used for output folders
 
 # --- outputs (server NVMe via the data/ symlink; audio never enters the repo) ---

@@ -339,7 +339,13 @@ def window_table(blocks: pd.DataFrame, duration_s: float, excerpt_s: float, heur
                      "std_dbfs": round(float(sel.rms_db.std()), 2),
                      "mean_flatness": round(float(sel.flatness.mean()), 4),
                      "max_flatness": round(float(sel.flatness.max()), 4),
-                     "dead_air": bool((run >= dead_blocks).any())})
+                     "dead_air": bool((run >= dead_blocks).any()),
+                     # v2 extras (additive; the v1 path builds its output rows explicitly
+                     # and never reads these): share of blocks below the dead-air floor,
+                     # and the audible-activity proxy for sparse material
+                     "dead_fraction": round(float(below.mean()), 3),
+                     "active_fraction": round(float(
+                         (sel.rms_db.values > heur.get("activity_dbfs", -45.0)).mean()), 3)})
     return pd.DataFrame(rows)
 
 
@@ -675,7 +681,11 @@ def build_freeze(cfg: dict, dirs: dict[str, Path]) -> pd.DataFrame:
     normalised twins into final/, and write the frozen v1 manifest."""
     fz = cfg["freeze"]
     final_dir = cfg["storage_root"] / fz["final_dir"]
-    final_dir.mkdir(parents=True, exist_ok=True)
+    # layout: final/original/<as_is_file> + final/normalised/<normalised_file>
+    # (manifest columns stay bare filenames; the split is directory-level only)
+    original_dir, normalised_dir = final_dir / "original", final_dir / "normalised"
+    for d in (original_dir, normalised_dir):
+        d.mkdir(parents=True, exist_ok=True)
     base = REPO_ROOT / cfg["out_candidates"]
     cands = pd.read_parquet(base.with_suffix(".parquet")).set_index("candidate_file")
     items = pd.read_parquet(base.parent / f"{base.name}_external_items.parquet").set_index("slot")
@@ -688,8 +698,8 @@ def build_freeze(cfg: dict, dirs: dict[str, Path]) -> pd.DataFrame:
         c = cands.loc[cand_file]
         slot = c["slot"]
         stem = Path(cand_file).stem
-        as_is = final_dir / f"{stem}.wav"
-        normalised = final_dir / f"{stem}{fz['normalised_suffix']}.wav"
+        as_is = original_dir / f"{stem}.wav"
+        normalised = normalised_dir / f"{stem}{fz['normalised_suffix']}.wav"
         shutil.copyfile(dirs["candidates"] / cand_file, as_is)
         audio, sr = sf.read(str(as_is), dtype="float32", always_2d=True)
         out, norm = normalise_excerpt(audio, sr, float(fz["target_lufs"]), float(fz["peak_ceiling"]))
@@ -738,6 +748,509 @@ def build_freeze(cfg: dict, dirs: dict[str, Path]) -> pd.DataFrame:
     return df
 
 
+# ============================================================================ v2
+# demo_set_v2: the slot system is retired. Grain model — `sources` (one per media file,
+# keyed by video_id; acquire/ingest/QC once) × `items` (one per demo item; tags +
+# windows). Carried v1 items keep their human-confirmed picks (candidate c01, audio
+# symlinked from v1); new items get 8–12 stratified candidate windows for listening.
+NON_PERFORMER_ROLES = ("무용", "작곡", "작사", "안무", "편곡", "주최", "촬영")
+KNOWN_CREDIT_KEYS = set(KNOWN_INSTRUMENTS) | set(NON_PERFORMER_ROLES) | {"사물", "대고", "바라", "목탁"}
+_BLOCK_HEADER = re.compile(r"^\s*(\d{1,2})\.\s+(\S.*)$")
+
+
+def parse_credit_pairs(line: str) -> list[dict]:
+    """One prose line → [{instrument, count, players}] for both credit layouts seen in
+    the wild: '피리/홍현우, 대금/김영헌' (slash-bound pairs) and '거문고 : 박다울 /
+    장구 : 이우성' (colon-bound pairs). Only pairs whose key is a known instrument or
+    role are kept, so profile lines like '김영헌/정악단 부수석' fall through."""
+    text = line.strip().lstrip("○-·* ").strip()
+    names_charset = r"[가-힣·,\s()준단원객원명\d]"
+    if re.search(r"[가-힣]\s*:", text):                     # colon-bound layout
+        pat = rf"([가-힣]+)\s*:\s*({names_charset}+?)(?=(?:[/,]?\s*[가-힣]+\s*:)|$)"
+    else:                                                   # slash-bound layout (v1 style)
+        pat = rf"([가-힣]+)\s*/\s*({names_charset}+?)(?=(?:,\s*[가-힣]+\s*/)|$)"
+    out = []
+    for m in re.finditer(pat, text):
+        key, names = m.group(1), m.group(2)
+        if key not in KNOWN_CREDIT_KEYS:
+            continue
+        players = [p.strip() for p in re.split(r"[·,/]", names) if p.strip()]
+        out.append({"instrument": key, "count": len(players), "players": players})
+    return out
+
+
+def parse_description_blocks(description: str) -> list[dict]:
+    """Numbered programme blocks ('01. title (m:ss)?') with the credit lines under each.
+    Descriptions without numbered headers yield one block (idx 0) holding every parsed
+    credit line. start_s comes from a trailing (m:ss)/(h:mm:ss) chapter timestamp."""
+    blocks: list[dict] = []
+    current: dict | None = None
+    for line in description.splitlines():
+        m = _BLOCK_HEADER.match(line)
+        if m:
+            title = m.group(2).strip()
+            ts = _TS.search(title)
+            start = None
+            if ts and title.rstrip().endswith(")"):         # '살풀이 (23:06)' chapter form
+                h, mnt, sec = ts.groups()
+                start = float((int(h) if h else 0) * 3600 + int(mnt) * 60 + int(sec))
+                title = (title[:ts.start()] + title[ts.end():]).strip(" ()")
+            current = {"idx": int(m.group(1)), "title": title, "start_s": start, "credits": []}
+            blocks.append(current)
+            continue
+        pairs = parse_credit_pairs(line)
+        if pairs:
+            if current is None:
+                current = {"idx": 0, "title": None, "start_s": None, "credits": []}
+                blocks.append(current)
+            current["credits"].extend(pairs)
+    return blocks
+
+
+def item_credits_v2(blocks: list[dict], piece_hint: str | None) -> dict:
+    """Credited instrumentation for one item: the matching programme block when a piece
+    hint is given, else every block (single-piece sources). Non-performer roles (무용,
+    작곡, …) are dropped with a note — parsed from the VERBATIM description, per spec."""
+    matched = None
+    if piece_hint:
+        for b in blocks:
+            if b["title"] and nfc(piece_hint) in nfc(b["title"]):
+                matched = b
+                break
+    pool = [matched] if matched else blocks
+    credits, dropped = [], set()
+    for b in pool:
+        for c in b["credits"]:
+            if c["instrument"] in NON_PERFORMER_ROLES:
+                dropped.add(c["instrument"])
+            else:
+                credits.append(c)
+    return {"granularity": "piece" if matched else "item",
+            "piece": matched["title"] if matched else None, "credits": credits,
+            "notes": (f"non-performer roles dropped: {sorted(dropped)}" if dropped else "")}
+
+
+def piece_bounds(blocks: list[dict], piece_hint: str, duration_s: float) -> tuple[float, float]:
+    """[start of the matching chapter, start of the next chapter) from the description's
+    own timestamped chapter list."""
+    chapters = [b for b in blocks if b["start_s"] is not None]
+    for i, b in enumerate(chapters):
+        if b["title"] and nfc(piece_hint) in nfc(b["title"]):
+            hi = chapters[i + 1]["start_s"] if i + 1 < len(chapters) else duration_s
+            return float(b["start_s"]), float(hi)
+    raise ValueError(f"piece {piece_hint!r} not found in the description's chapter list")
+
+
+def stratified_picks(windows: pd.DataFrame, lo: float, hi: float, n: int,
+                     rank_by: str, keep_q: float) -> tuple[pd.DataFrame, int]:
+    """n windows SPREAD across [lo, hi]: viable pool = no dead air, flattest (1-keep_q)
+    tail dropped (applause/ambience); one best window per equal-width bin, then unfilled
+    bins backfilled from the remaining pool (≥10 s from every existing pick). rank_by
+    'activity' puts the audible-activity fraction first (sparse items), else loudness.
+    Returns (picks sorted by start, number of bins with no viable window)."""
+    pool = windows[~windows.dead_air].copy()
+    if len(pool):
+        pool = pool[pool.mean_flatness <= pool.mean_flatness.quantile(keep_q)]
+    if len(pool) == 0:
+        return pool, n
+    keys = ["active_fraction", "mean_dbfs"] if rank_by == "activity" else ["mean_dbfs"]
+    ascending = [False] * len(keys) + [True]                # final tiebreak: most tonal
+    ranked = pool.sort_values(keys + ["mean_flatness"], ascending=ascending)
+    edges = np.linspace(lo, hi, n + 1)
+    centre = ranked.start_s + float(windows.end_s.iloc[0] - windows.start_s.iloc[0]) / 2
+    picks, taken, unfilled = [], set(), 0
+    for b in range(n):
+        in_bin = ranked[(centre >= edges[b]) & (centre < edges[b + 1]) & ~ranked.start_s.isin(taken)]
+        if len(in_bin) == 0:
+            unfilled += 1
+            continue
+        picks.append(in_bin.iloc[0].to_dict())
+        taken.add(in_bin.iloc[0].start_s)
+    for r in ranked[~ranked.start_s.isin(taken)].itertuples(index=False):
+        if len(picks) >= n:
+            break
+        if picks and min(abs(r.start_s - p["start_s"]) for p in picks) < 10.0:
+            continue
+        picks.append(r._asdict())
+        taken.add(r.start_s)
+    out = pd.DataFrame(picks).sort_values("start_s").reset_index(drop=True)
+    return out, unfilled
+
+
+# ---------------------------------------------------------------------------- v2: analyses
+def _spectral_frames(mono: np.ndarray, sr: int, n_fft: int, max_frames: int) -> tuple[np.ndarray, np.ndarray]:
+    """≤max_frames Hann-windowed magnitude spectra sampled evenly across the file."""
+    hop = max(int(len(mono) // max_frames), n_fft)
+    starts = np.arange(0, len(mono) - n_fft, hop)
+    win = np.hanning(n_fft)
+    mags = np.empty((len(starts), n_fft // 2 + 1))
+    for i, s in enumerate(starts):
+        mags[i] = np.abs(np.fft.rfft(mono[int(s):int(s) + n_fft] * win))
+    return mags, np.fft.rfftfreq(n_fft, 1 / sr)
+
+
+def _running_median(x: np.ndarray, half: int) -> np.ndarray:
+    return np.array([np.median(x[max(0, i - half):i + half + 1]) for i in range(len(x))])
+
+
+def tone_check_analysis(path: Path) -> dict:
+    """Persistent narrowband-tone detector (dzfOA-2x4_M squeal report): median magnitude
+    spectrum across the whole file; a real interfering tone shows as a bin ≥12 dB above
+    the local spectral floor. Reports frequency, approx level (dBFS re full-scale sine),
+    prominence, and presence rate (share of frames where the bin sticks out ≥10 dB)."""
+    audio, sr = sf.read(str(path), dtype="float32", always_2d=True)
+    mono = audio.mean(axis=1).astype(np.float64)
+    n_fft = 8192                                            # ~5.4 Hz bins at 44.1 kHz
+    mags, freqs = _spectral_frames(mono, sr, n_fft, max_frames=2000)
+    med_db = 20 * np.log10(np.median(mags, axis=0) + 1e-12)
+    floor = _running_median(med_db, half=50)                # local floor over ~±270 Hz
+    prominence = med_db - floor
+    sine_ref = n_fft / 4                                    # full-scale sine, Hann window
+    peaks: list[dict] = []
+    for i in np.argsort(prominence)[::-1]:
+        if prominence[i] < 12.0:
+            break                                           # sorted → nothing further qualifies
+        if freqs[i] < 40.0 or any(abs(freqs[i] - p["freq_hz"]) < 50.0 for p in peaks):
+            continue
+        frame_db = 20 * np.log10(mags[:, i] + 1e-12)
+        frame_floor = 20 * np.log10(np.median(mags[:, max(0, i - 50):i + 51], axis=1) + 1e-12)
+        peaks.append({"freq_hz": round(float(freqs[i]), 1),
+                      "level_dbfs": round(float(med_db[i] - 20 * np.log10(sine_ref)), 1),
+                      "prominence_db": round(float(prominence[i]), 1),
+                      "presence_fraction": round(float(np.mean(frame_db > frame_floor + 10.0)), 3)})
+        if len(peaks) >= 5:
+            break
+    return {"analysis": "tone_check", "n_fft": n_fft, "num_frames": int(mags.shape[0]),
+            "peaks": peaks}
+
+
+BAND_EDGES_HZ = [20, 150, 500, 2000, 8000, 20000]
+
+
+def band_fractions(mags: np.ndarray, freqs: np.ndarray) -> dict[str, float]:
+    """Share of total power per band from averaged magnitude spectra."""
+    power = (mags ** 2).mean(axis=0)
+    total = float(power[(freqs >= BAND_EDGES_HZ[0]) & (freqs <= BAND_EDGES_HZ[-1])].sum())
+    out = {}
+    for lo, hi in zip(BAND_EDGES_HZ[:-1], BAND_EDGES_HZ[1:]):
+        out[f"band_{lo}_{hi}"] = round(float(power[(freqs >= lo) & (freqs < hi)].sum()) / total, 4)
+    return out
+
+
+def percussion_band_analysis(path: Path) -> dict:
+    """File-level percussion-band energy pass (장구춤): long-term band energy fractions,
+    overall crest factor, and the p50/p95 of per-second crest factors (raw transient
+    content survives high short-term crest; heavy processing flattens it)."""
+    audio, sr = sf.read(str(path), dtype="float32", always_2d=True)
+    mono = audio.mean(axis=1).astype(np.float64)
+    mags, freqs = _spectral_frames(mono, sr, n_fft=8192, max_frames=2000)
+    crest_overall = 20 * np.log10(np.abs(mono).max() / max(np.sqrt(np.mean(mono ** 2)), 1e-12))
+    block = sr                                              # 1 s blocks
+    crests = []
+    for b in range(len(mono) // block):
+        seg = mono[b * block:(b + 1) * block]
+        rms = np.sqrt(np.mean(seg ** 2))
+        if rms > 1e-6:                                      # skip silence (crest undefined)
+            crests.append(20 * np.log10(np.abs(seg).max() / rms))
+    return {"analysis": "percussion_band", **band_fractions(mags, freqs),
+            "crest_overall_db": round(float(crest_overall), 2),
+            "crest_1s_p50_db": round(float(np.percentile(crests, 50)), 2),
+            "crest_1s_p95_db": round(float(np.percentile(crests, 95)), 2)}
+
+
+def window_band_fraction(ingest_path: Path, start_s: float, excerpt_s: float) -> float:
+    """Low-band (20–150 Hz) power share of one window — the per-window percussion proxy."""
+    info = sf.info(str(ingest_path))
+    audio, sr = sf.read(str(ingest_path), start=int(start_s * info.samplerate),
+                        frames=int(excerpt_s * info.samplerate), dtype="float32", always_2d=True)
+    mags, freqs = _spectral_frames(audio.mean(axis=1).astype(np.float64), sr, 8192, max_frames=200)
+    return band_fractions(mags, freqs)["band_20_150"]
+
+
+def window_lufs(ingest_path: Path, start_s: float, excerpt_s: float) -> float:
+    """Integrated LUFS of one candidate window (reported per pick, per spec)."""
+    info = sf.info(str(ingest_path))
+    audio, sr = sf.read(str(ingest_path), start=int(start_s * info.samplerate),
+                        frames=int(excerpt_s * info.samplerate), dtype="float32", always_2d=True)
+    return round(float(pyloudnorm.Meter(sr).integrated_loudness(audio.astype(np.float64))), 2)
+
+
+# ---------------------------------------------------------------------------- v2: build
+def build_source_v2(vid: str, cfg: dict, dirs: dict[str, Path], ingest_cfg: IngestConfig) -> dict:
+    """Acquire-side of one media file: probe, ingest (idempotent — v1 reuse arrives as
+    symlinks laid down beforehand), post-ingest QC (cached), verbatim provenance, parsed
+    description blocks, block features. Returns everything item rows denormalise from."""
+    raw = find_raw_file(dirs["raw"], vid)
+    meta = {**yt_metadata(dirs["raw"], vid), **probe_raw(raw), "raw_file": raw.name}
+    ingest_path = dirs["ingest"] / f"{vid}.wav"
+    ingest_json = dirs["provenance"] / f"{vid}.ingest.json"
+    if ingest_path.exists() and ingest_json.exists():
+        ingest_row = json.loads(ingest_json.read_text())
+    else:
+        audio, sr = decode_raw(raw, dirs["raw"])
+        ingest_row = ingest_external(audio, sr, ingest_cfg, ingest_path)
+        del audio
+        ingest_json.write_text(json.dumps(ingest_row, indent=2))
+    qc_json = dirs["provenance"] / f"{vid}.qc.json"
+    if qc_json.exists():
+        qc = json.loads(qc_json.read_text())
+    else:
+        qc = post_ingest_qc(ingest_path)
+        qc_json.write_text(json.dumps(qc, indent=2))
+    description = (dirs["raw"] / f"{vid}.description").read_text()
+    blocks_desc = parse_description_blocks(description)
+    shutil.copyfile(dirs["raw"] / f"{vid}.description", dirs["provenance"] / f"{vid}.txt")
+    if not (dirs["provenance"] / f"{vid}.info.json").exists():
+        shutil.copyfile(dirs["raw"] / f"{vid}.info.json", dirs["provenance"] / f"{vid}.info.json")
+    blocks_cache = dirs["provenance"] / f"{vid}.blocks.parquet"
+    if blocks_cache.exists():
+        blocks = pd.read_parquet(blocks_cache)
+    else:
+        mono, sr = sf.read(str(ingest_path), dtype="float32", always_2d=True)
+        blocks = block_features(mono.mean(axis=1), sr, cfg["heuristic"])
+        del mono
+        blocks.to_parquet(blocks_cache, index=False)
+    programme = [{"start_s": b["start_s"], "title": b["title"]}
+                 for b in blocks_desc if b["title"] is not None]
+    return {"meta": meta, "ingest_row": ingest_row, "qc": qc, "ingest_path": ingest_path,
+            "description_blocks": blocks_desc, "programme": programme, "blocks": blocks}
+
+
+def dataset_item_row(icfg: dict, cfg: dict) -> dict:
+    """Provenance + QC for a dataset-master item, from the manifests + the master file
+    itself (already in the 44.1 kHz/PCM_24 store — no new ingest)."""
+    sm = pd.read_parquet(REPO_ROOT / cfg["dataset"]["source_manifest"])
+    ev = pd.read_parquet(REPO_ROOT / cfg["dataset"]["eval_manifest"])
+    song = ev[ev.num_id == icfg["num_id"]].iloc[0]
+    master = sm[(sm.song_id == song.song_id) & (sm.role == "master")].iloc[0]
+    qc = post_ingest_qc(REPO_ROOT / master.out_path)
+    return {"source_kind": "dataset_master", "url": None, "video_id": None,
+            "title": song.song_id, "uploader": None, "upload_date": None,
+            "song_id": song.song_id, "genre_sub": song.genre_sub,
+            "yt_format_id": None, "yt_duration_s": None, "raw_file": master.out_path,
+            "raw_container": "wav", "raw_codec": master.src_subtype, "raw_bitrate_kbps": None,
+            "raw_sr": int(master.src_sr), "raw_channels": int(master.src_channels),
+            "raw_channel_layout": None, "raw_duration_s": float(master.out_duration),
+            "raw_lr_corr": float(master.lr_corr), "raw_peak": None, "raw_dc_offset": None,
+            "channel_action": None, "peak_before": None, "peak_after": None, "ops_applied": None,
+            **qc, "master_path": master.out_path}
+
+
+def carried_candidate_row(item_id: str, icfg: dict, v1_row: pd.Series, cfg: dict,
+                          dirs: dict[str, Path], instrumentation_json: str) -> dict:
+    """The item's human-confirmed v1 pick → candidate c01 (audio symlinked from v1)."""
+    start_s, end_s = float(v1_row.start_s), float(v1_row.end_s)
+    fname = f"{item_id}_c01_{mmss(start_s)}-{mmss(end_s)}.wav"
+    src = Path(cfg["v1_candidates_dir"]).expanduser() / v1_row.candidate_file
+    assert src.exists(), f"{item_id}: v1 candidate audio missing: {src}"
+    dst = dirs["candidates"] / fname
+    if not dst.exists():                                    # relative link: v2/candidates → v1/candidates
+        dst.symlink_to(Path("../../v1/candidates") / v1_row.candidate_file)
+    return {"item_id": item_id, "tier": icfg["tier"], "status": "carried_v1_pick",
+            "candidate_idx": 1, "candidate_file": fname,
+            "start_s": start_s, "end_s": end_s, "start_hms": hms(start_s), "end_hms": hms(end_s),
+            "piece": v1_row.piece if isinstance(v1_row.piece, str) else icfg.get("piece"),
+            "mean_dbfs": None, "min_block_dbfs": None, "std_dbfs": None,
+            "mean_flatness": None, "max_flatness": None,
+            "dead_fraction": None, "active_fraction": None,
+            "window_lufs": float(v1_row.measured_lufs_as_is), "low_band_fraction": None,
+            "expected_instrumentation": instrumentation_json,
+            "selection_note": f"carried from v1 freeze ({v1_row.selection_note})"}
+
+
+def build_v2(cfg: dict, dirs: dict[str, Path], render: bool, part: str) -> None:
+    """v2 stage 1: per-source acquire/ingest/QC once, then per-item tags + candidates.
+    Writes the UNFROZEN item manifest + the candidates side table."""
+    ingest_cfg = IngestConfig.load(REPO_ROOT / cfg["ingest_config"], REPO_ROOT)
+    heur, excerpt_s = cfg["heuristic"], float(cfg["excerpt_s"])
+    v1 = pd.read_parquet(REPO_ROOT / cfg["v1_manifest"]).set_index("item_key")
+    env_values = set(cfg["environment_values"])
+    sources: dict[str, dict] = {}
+    item_rows, cand_rows = [], []
+
+    for item_id, icfg in cfg["items"].items():
+        is_dataset = icfg["source"] == "dataset"
+        if (part == "A" and is_dataset) or (part == "B" and not is_dataset):
+            continue
+        assert icfg["environment"] in env_values, f"{item_id}: bad environment"
+        assert (icfg.get("ood_reason") is None) == (not icfg["ood"]), f"{item_id}: ood/ood_reason mismatch"
+        print(f"\n=== {item_id} [{icfg['tier']}] {icfg['short_title']}")
+
+        if is_dataset:
+            prov = dataset_item_row(icfg, cfg)
+            v1_row = v1.loc[icfg["carried_from_v1"]]
+            instrumentation = {"granularity": "item", "credits": None,
+                               "stem_classes": v1_row.stem_classes,
+                               "audible_classes_song": v1_row.audible_classes_song}
+            programme, flags = [], []
+            ingest_path = REPO_ROOT / prov.pop("master_path")
+        else:
+            vid = icfg["source"]
+            if vid not in sources:
+                sources[vid] = build_source_v2(vid, cfg, dirs, ingest_cfg)
+            s = sources[vid]
+            instrumentation = item_credits_v2(s["description_blocks"], icfg.get("piece"))
+            flags = qc_flags({**s["ingest_row"], **s["qc"]}, cfg["qc_flags"])
+            programme = s["programme"]
+            ingest_path = s["ingest_path"]
+            prov = {"source_kind": "youtube", "url": cfg["sources"][vid]["url"], "video_id": vid,
+                    "song_id": None, "genre_sub": None,
+                    **s["meta"], **s["ingest_row"], **s["qc"]}
+        flags = flags + list(icfg.get("extra_qc_flags", []))
+        if icfg.get("carried_from_v1") and not is_dataset:
+            # carried items keep the v1-reviewed credits (v1 had verified per-slot parsing
+            # for the prose-style descriptions); the generic parser covers new items only
+            instrumentation_json = str(v1.loc[icfg["carried_from_v1"]].expected_instrumentation)
+            instrumentation = json.loads(instrumentation_json)
+        else:
+            instrumentation_json = json.dumps(instrumentation, ensure_ascii=False)
+        # carried v1 JSON may be a bare credits list (piece grain) rather than a dict
+        credits_view = instrumentation.get("credits") if isinstance(instrumentation, dict) else instrumentation
+        print(f"  credits: {json.dumps(credits_view, ensure_ascii=False)}")
+        print(f"  flags: {flags or 'none'}")
+
+        # item-specific analyses (tone check / percussion band), cached to provenance
+        analyses = {}
+        for name in icfg.get("analysis", []):
+            out = dirs["provenance"] / f"{item_id}.{name}.json"
+            if out.exists():
+                analyses[name] = json.loads(out.read_text())
+            else:
+                fn = {"tone_check": tone_check_analysis, "percussion_band": percussion_band_analysis}[name]
+                analyses[name] = fn(ingest_path)
+                out.write_text(json.dumps(analyses[name], indent=2))
+            print(f"  {name}: {json.dumps(analyses[name])}")
+        if "tone_check" in analyses:
+            for p in analyses["tone_check"]["peaks"]:
+                if p["presence_fraction"] >= 0.5:           # a real sustained tone
+                    flags.append(f"TONAL_INTERFERENCE({p['freq_hz']:.0f}Hz)")
+
+        # candidates: carried v1 pick, or stratified windows for listening
+        if icfg.get("carried_from_v1"):
+            cand_rows.append(carried_candidate_row(
+                item_id, icfg, v1.loc[icfg["carried_from_v1"]], cfg, dirs, instrumentation_json))
+            n_analysed = n_dead = 0
+            n_picked, unfilled = 1, 0
+            print("  candidates: carried v1 pick (human-confirmed 2026-08-17) — no re-windowing")
+        else:
+            s = sources[icfg["source"]]
+            duration = s["qc"]["ingest_duration_s"]
+            if icfg.get("section"):
+                lo, hi = float(icfg["section"]["start_s"]), float(icfg["section"]["end_s"])
+                lo = max(lo, heur["edge_margin_s"])
+            elif icfg.get("piece"):
+                lo, hi = piece_bounds(s["description_blocks"], icfg["piece"], duration)
+            else:
+                lo, hi = heur["edge_margin_s"], duration - heur["edge_margin_s"]
+            windows = window_table(s["blocks"], duration, excerpt_s, heur, lo, hi)
+            n = int(icfg["num_candidates"])
+            picks, unfilled = stratified_picks(windows, lo, hi, n, icfg.get("rank_by", "loudness"),
+                                               heur["flatness_keep_quantile"])
+            n_analysed, n_dead, n_picked = len(windows), int(windows.dead_air.sum()), len(picks)
+            print(f"  span {hms(lo)}–{hms(hi)} · windows {n_analysed} · dead-air rejected {n_dead}"
+                  f" · picked {n_picked}{f' · {unfilled} bins unfilled' if unfilled else ''}")
+            for i, w in enumerate(picks.itertuples(index=False), start=1):
+                fname = f"{item_id}_c{i:02d}_{mmss(w.start_s)}-{mmss(w.end_s)}.wav"
+                if render:
+                    render_excerpt(ingest_path, w.start_s, excerpt_s, dirs["candidates"] / fname)
+                cand_rows.append({
+                    "item_id": item_id, "tier": icfg["tier"], "status": "proposed",
+                    "candidate_idx": i, "candidate_file": fname,
+                    "start_s": w.start_s, "end_s": w.end_s,
+                    "start_hms": hms(w.start_s), "end_hms": hms(w.end_s),
+                    "piece": icfg.get("piece"),
+                    "mean_dbfs": w.mean_dbfs, "min_block_dbfs": w.min_block_dbfs,
+                    "std_dbfs": w.std_dbfs, "mean_flatness": w.mean_flatness,
+                    "max_flatness": w.max_flatness, "dead_fraction": w.dead_fraction,
+                    "active_fraction": w.active_fraction,
+                    "window_lufs": window_lufs(ingest_path, w.start_s, excerpt_s),
+                    "low_band_fraction": (round(window_band_fraction(ingest_path, w.start_s, excerpt_s), 4)
+                                          if "percussion_band" in analyses else None),
+                    "expected_instrumentation": instrumentation_json,
+                    "selection_note": "heuristic proposal — listener gate pending"})
+                print(f"    c{i:02d} {hms(w.start_s)}–{hms(w.end_s)}  {w.mean_dbfs:6.1f} dBFS"
+                      f"  act {w.active_fraction:.2f}  flat {w.mean_flatness:.3f}")
+
+        item_rows.append({
+            "item_id": item_id, "tier": icfg["tier"], "environment": icfg["environment"],
+            "ood": bool(icfg["ood"]), "ood_reason": icfg.get("ood_reason"),
+            "short_title": icfg["short_title"], "piece": icfg.get("piece"),
+            "carried_from_v1": icfg.get("carried_from_v1"),
+            **prov, "qc_flags": ";".join(flags),
+            "expected_instrumentation": instrumentation_json,
+            "programme": json.dumps(programme, ensure_ascii=False),
+            "num_windows_analysed": n_analysed, "num_windows_dead_air": n_dead,
+            "num_candidates": n_picked,
+            "notes_from_listening": icfg.get("notes_from_listening"),
+            "analyses": json.dumps(analyses, ensure_ascii=False) if analyses else None})
+
+    items_parquet, items_csv = table_paths(REPO_ROOT / cfg["out_items"])
+    df_items = pd.DataFrame(item_rows)
+    df_items.to_parquet(items_parquet, index=False)
+    df_items.to_csv(items_csv, index=False)
+    cand_parquet, cand_csv = table_paths(REPO_ROOT / cfg["out_candidates"])
+    df_cands = pd.DataFrame(cand_rows)
+    df_cands.to_parquet(cand_parquet, index=False)
+    df_cands.to_csv(cand_csv, index=False)
+    print(f"\nwrote {len(df_items)} items → {items_parquet} (+csv, UNFROZEN — no picks yet)"
+          f"\nwrote {len(df_cands)} candidate rows → {cand_parquet} (+csv)")
+
+
+# ---------------------------------------------------------------------------- v2: freeze
+FREEZE_COLUMNS = ["candidate_file", "start_s", "end_s", "start_hms", "end_hms", "excerpt_s",
+                  "as_is_file", "normalised_file", "target_lufs", "measured_lufs_as_is",
+                  "gain_db", "peak_guard_applied", "realised_lufs", "peak_normalised",
+                  "window_lufs", "active_fraction", "pick_status", "pick_note"]
+
+
+def build_freeze_v2(cfg: dict, dirs: dict[str, Path]) -> None:
+    """v2 stage 2: resolve the listened picks against the candidates table, render
+    final/ (as-is byte copy + the −19 LUFS `_normalised` twin = the model's input), and
+    freeze the item manifest in place — item rows + pick columns. Idempotent: re-freeze
+    drops previous pick columns before merging, so the manifest never accumulates."""
+    fz = cfg["freeze"]
+    final_dir = cfg["storage_root"] / fz["final_dir"]
+    # layout: final/original/<as_is_file> + final/normalised/<normalised_file>
+    # (manifest columns stay bare filenames; the split is directory-level only)
+    original_dir, normalised_dir = final_dir / "original", final_dir / "normalised"
+    for d in (original_dir, normalised_dir):
+        d.mkdir(parents=True, exist_ok=True)
+    items = pd.read_parquet(table_paths(REPO_ROOT / cfg["out_items"])[0])
+    items = items.drop(columns=[c for c in FREEZE_COLUMNS if c in items.columns])
+    cands = pd.read_parquet(table_paths(REPO_ROOT / cfg["out_candidates"])[0]).set_index("candidate_file")
+    mismatch = set(items.item_id) ^ set(fz["picks"])
+    assert not mismatch, f"picks and items disagree on: {sorted(mismatch)}"
+    rows = []
+    for item in items.itertuples(index=False):
+        cand_file = fz["picks"][item.item_id]
+        c = cands.loc[cand_file]
+        assert c["item_id"] == item.item_id, f"{cand_file} belongs to {c['item_id']}, not {item.item_id}"
+        stem = Path(cand_file).stem
+        as_is = original_dir / f"{stem}.wav"
+        normalised = normalised_dir / f"{stem}{fz['normalised_suffix']}.wav"
+        shutil.copyfile(dirs["candidates"] / cand_file, as_is)      # follows carried symlinks
+        audio, sr = sf.read(str(as_is), dtype="float32", always_2d=True)
+        out, norm = normalise_excerpt(audio, sr, float(fz["target_lufs"]), float(fz["peak_ceiling"]))
+        sf.write(str(normalised), out, sr, subtype="PCM_24")
+        rows.append({**item._asdict(),
+                     "candidate_file": cand_file, "start_s": float(c["start_s"]), "end_s": float(c["end_s"]),
+                     "start_hms": c["start_hms"], "end_hms": c["end_hms"],
+                     "excerpt_s": float(cfg["excerpt_s"]),
+                     "as_is_file": as_is.name, "normalised_file": normalised.name,
+                     "target_lufs": float(fz["target_lufs"]), **norm,
+                     "window_lufs": c["window_lufs"], "active_fraction": c["active_fraction"],
+                     "pick_status": c["status"],
+                     "pick_note": fz.get("notes", {}).get(item.item_id, c["selection_note"])})
+        print(f"  {item.item_id:22s} {cand_file:46s} {norm['measured_lufs_as_is']:6.1f} LUFS → "
+              f"{norm['gain_db']:+5.1f} dB → {norm['realised_lufs']:6.1f}"
+              f"{'  ⚠️ peak-guarded' if norm['peak_guard_applied'] else ''}")
+    df = pd.DataFrame(rows)
+    out_parquet, out_csv = table_paths(REPO_ROOT / cfg["out_items"])
+    df.to_parquet(out_parquet, index=False)
+    df.to_csv(out_csv, index=False)
+    print(f"\nfrozen {len(df)} items → {out_parquet} (+csv) · audio → {final_dir}")
+
+
 # ---------------------------------------------------------------------------- main
 def main() -> None:
     ap = argparse.ArgumentParser(description="demo_set_v1 stage 1: candidates for listening")
@@ -749,6 +1262,18 @@ def main() -> None:
     cfg = load_config(REPO_ROOT / args.config)
     dirs = storage_dirs(cfg)
     render = not args.skip_render
+    if "items" in cfg:                                      # v2 config (sources/items model)
+        if args.freeze:
+            if "freeze" not in cfg:
+                sys.exit("v2 freeze is stage 2 — add a `freeze:` section to the config after listening")
+            build_freeze_v2(cfg, dirs)
+        elif "freeze" in cfg:
+            # stage 1 rewrites out_items UNFROZEN — never silently clobber a frozen manifest
+            sys.exit("config has a `freeze:` section — stage 1 would overwrite the frozen "
+                     "manifest; comment the section out to rebuild candidates")
+        else:
+            build_v2(cfg, dirs, render, args.part)
+        return
     if args.freeze:
         build_freeze(cfg, dirs)
         return
