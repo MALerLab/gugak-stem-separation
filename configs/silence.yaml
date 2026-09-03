@@ -1,0 +1,19 @@
+# silence.yaml — THE single config home for the silence tolerance.
+#
+# Resolves the long-standing open item (Notion legal pad, found 2026-08-11): the repo
+# rule says silence thresholds come from config, but until now the tolerance existed
+# only as `scripts/verify_coherent_sampler.py`'s `--silence-eps` CLI default. Any code
+# that needs to decide "is this audio silent / is this stem class absent" reads THIS
+# file — never an inline constant.
+#
+# Physical background: post-ingest silence is NOT bit-zero. DC removal leaves a ±1-LSB
+# residue of 1.192e-07 (2^-23, one bit of 24-bit depth) ≈ −138 dBFS peak. Any tolerance
+# must sit safely above that residue and safely below real musical content — sparse
+# stems (박 etc.) are quiet on average but far louder than −80 dBFS RMS.
+#
+# absent_rms_dbfs: a reference stem whose full-song RMS (channels pooled) falls below
+# this is classified ABSENT for evaluation — the class is treated as not in the song,
+# no SDR is computed (it would degenerate to a constant), and only the model's
+# false-activation energy is reported. −80 dBFS RMS is ~58 dB above the DC residue.
+silence:
+  absent_rms_dbfs: -80.0
