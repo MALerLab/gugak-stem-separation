@@ -1,0 +1,20 @@
+# configs/render/demo_v2_exp003.0_ep59.yaml — render job for src/render_demo.py.
+# Demo set v2 (16 frozen final clips) through the exp003.0 FINAL checkpoint (ep59,
+# val SI-SDR +10.70) — the BS-RoFormer headline model. FLAC master copies; transcode
+# to mp3 with ffmpeg later if a meeting needs small files.
+
+checkpoint: experiments/exp003.0_260809_bsroformer_pilot/checkpoints/model_bs_roformer_ep_59_si_sdr_10.7013.ckpt
+model_config: configs/exp003.0_bsroformer_pilot.yaml
+model_type: bs_roformer
+run_label: exp003.0                # output folder: <run_label>_ep<N>/
+
+# --- inputs: the frozen v2 final picks at the trained −19 LUFS ---
+input_glob: data/gugak_demo_set/v2/final/normalised/*_normalised.wav
+clip_name_strip_suffix: _normalised
+
+# --- outputs (storage NVMe via the data/ symlink) ---
+output_root: data/gugak_demo_set/v2/renders
+audio:
+  format: FLAC                     # archival master; mp3 derivable on CPU any time
+  compression_level: 0.5           # libsndfile FLAC effort knob (size only, lossless)
+  write_mixture: true              # re-emit the input for one-folder listening

@@ -56,6 +56,17 @@ def scale_invariant_sdr(reference: np.ndarray, estimate: np.ndarray) -> float:
                                (np.sum(noise ** 2) + eps)))
 
 
+def model_sample_rate(msst_config) -> int:
+    """The model's training sample rate — its config home differs per family.
+
+    Spectrogram models (BS-RoFormer) carry audio.sample_rate; HTDemucs carries
+    training.samplerate.
+    """
+    if "sample_rate" in getattr(msst_config, "audio", {}):
+        return int(msst_config.audio.sample_rate)
+    return int(msst_config.training.samplerate)
+
+
 def load_msst_model(model_type: str, model_config_path: Path, checkpoint_path: Path,
                     device: torch.device) -> tuple:
     """Load an MSST model + config and its checkpoint dict, ready for inference.

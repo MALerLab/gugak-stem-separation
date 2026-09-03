@@ -33,7 +33,7 @@ import soundfile
 import torch
 import yaml
 
-from src.render_audio import REPO_ROOT, load_msst_model
+from src.render_audio import REPO_ROOT, load_msst_model, model_sample_rate
 
 
 def checkpoint_epoch(checkpoint_path: Path) -> int:
@@ -108,7 +108,7 @@ def render_clip(model, config, device: torch.device, clip_path: Path, out_dir: P
     """
     from utils.model_utils import demix   # MSST import (path set up by load_msst_model)
 
-    mixture, sample_rate = read_clip_as_stereo(clip_path, int(config.audio.sample_rate))
+    mixture, sample_rate = read_clip_as_stereo(clip_path, model_sample_rate(config))
     separated = demix(config, model, mixture, device, model_type=model_type)
 
     out_dir.mkdir(parents=True, exist_ok=True)
