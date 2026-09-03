@@ -1,0 +1,36 @@
+# eval-job config — ZERO-SHOT: pretrained MUSDB 4-stem HTDemucs (official demucs
+# weights, 100% transferred into MSST format — LBD-temp/htdemucs_4stem_init_log.txt),
+# TEST split, Σstem variant. Same class_map semantics as the BS-RoFormer twin:
+# drums scores against 타악기, bass/other/vocals land as absent rows.
+#
+# NOTE the model config keeps the upstream template's training.normalize: true —
+# that is how these weights are meant to run; our fine-tuned configs turned it off.
+#
+# Run:
+#   uv run python -m src.eval.runner --config configs/eval/zeroshot_htdemucs_test_sumstem.yaml
+
+run_id: eval_zeroshot_htdemucs_test_sumstem
+
+checkpoint: LBD-temp/htdemucs_musdb_4stem.ckpt
+model_config: configs/zeroshot_htdemucs_musdb_4stem.yaml
+model_type: htdemucs
+
+targets:
+  - {split: test, variant: sumstem}
+
+metrics: [si_sdr, usdr]
+usdr_eps: 1.0e-7
+metric_cap_db: 100.0
+silence_config: configs/silence.yaml
+eval_manifest: manifests/parquet/eval_manifest.parquet
+out_dir: experiments/260901_zeroshot_4stem/eval
+seed: 42
+device: cuda:1
+
+class_map:
+  drums: 타악기
+
+render:
+  enabled: false
+  songs: []
+  out_dir: null

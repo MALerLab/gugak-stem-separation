@@ -1,0 +1,35 @@
+# eval-job config — ZERO-SHOT: pretrained MUSDB 4-stem BS-RoFormer (the exp003 warm-
+# start base, no gugak fine-tuning), TEST split, Σstem variant. class_map scores the
+# drums head against the real 타악기 stem; bass/other/vocals have no gugak reference
+# and land as absent rows (false-activation energies only). Only the 타악기 row is a
+# meaningful SDR — everything else is energy-distribution narrative.
+#
+# Run:
+#   uv run python -m src.eval.runner --config configs/eval/zeroshot_bsroformer_test_sumstem.yaml
+
+run_id: eval_zeroshot_bsroformer_test_sumstem
+
+checkpoint: experiments/260901_zeroshot_4stem/checkpoints/model_bs_roformer_ep_17_sdr_9.6568.ckpt
+model_config: configs/zeroshot_bsroformer_musdb_4stem.yaml
+model_type: bs_roformer
+
+targets:
+  - {split: test, variant: sumstem}
+
+metrics: [si_sdr, usdr]
+usdr_eps: 1.0e-7
+metric_cap_db: 100.0
+silence_config: configs/silence.yaml
+eval_manifest: manifests/parquet/eval_manifest.parquet
+out_dir: experiments/260901_zeroshot_4stem/eval
+seed: 42
+device: cuda:0
+
+# model head -> taxonomy class; unmapped heads (bass/other/vocals) score as absent
+class_map:
+  drums: 타악기
+
+render:
+  enabled: false
+  songs: []
+  out_dir: null
