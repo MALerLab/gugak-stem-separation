@@ -26,6 +26,8 @@ data/eda/*.csv
 # --- experiment outputs ---
 wandb/
 checkpoints/
+# eval_renders = symlinks into ~/storage (persisted separated audio, never committed)
+eval_renders
 outputs/
 *.log
 
@@ -96,3 +98,6 @@ MEMO.md
 # ISMIR LBD paper lives in its own PRIVATE repo (gugak-stem-separation-paper);
 # never tracked here — this repo is public
 /paper/
+
+# --- LBD-temp/: throwaway zero-shot weights for the LBD paper, user cleans up after ---
+LBD-temp/
