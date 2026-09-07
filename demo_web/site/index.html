@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gugak nine-stem separation — listening demo</title>
+<style>
+  :root {
+    --bg: #fbfaf7; --fg: #1d1d1b; --muted: #6b6a66; --line: #e2dfd8; --panel: #ffffff;
+    --wave: #b8b4aa; --progress: #2f5d8a; --accent: #2f5d8a; --accent-bg: #eef3f8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --fg: #ecebe6; --muted: #9c9a93; --line: #2d2d2a; --panel: #1e1e1c;
+            --wave: #4d4c48; --progress: #7fb0dc; --accent: #7fb0dc; --accent-bg: #1f2b38; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans KR", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 28px 16px 64px; }
+  header h1 { font-size: 1.45rem; line-height: 1.25; margin: 0 0 6px; }
+  header .authors { margin: 0 0 10px; color: var(--muted); }
+  header p { margin: 0 0 6px; }
+  header .fine { color: var(--muted); font-size: 0.92rem; }
+  section { margin-top: 36px; }
+  section h2 { font-size: 1.15rem; margin: 0 0 2px; }
+  section .blurb { margin: 0 0 14px; color: var(--muted); font-size: 0.95rem; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 10px; }
+  .head { display: grid; grid-template-columns: 40px 1fr 32px; align-items: center; gap: 10px; padding: 10px 12px 8px; }
+  .title { min-width: 0; }
+  .title .name { font-weight: 600; }
+  .title .genre { color: var(--muted); }
+  .title .scores { color: var(--muted); font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+  .title .note { color: var(--muted); font-size: 0.88rem; }
+  button.icon { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel);
+                color: var(--fg); cursor: pointer; font-size: 14px; line-height: 1; padding: 0; }
+  button.icon:hover, button.icon:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
+  button.chev { border: none; background: none; font-size: 18px; color: var(--muted); cursor: pointer; padding: 4px; }
+  button.chev:hover, button.chev:focus-visible { color: var(--accent); outline: none; }
+  .panel.open button.chev { transform: rotate(180deg); }
+  .headwave { padding: 0 12px 10px; }
+  .player { position: relative; border-radius: 4px; outline: none; }
+  .player:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .player .time { position: absolute; right: 6px; bottom: 2px; font-size: 0.78rem; color: var(--muted);
+                  background: var(--panel); padding: 0 4px; border-radius: 3px; font-variant-numeric: tabular-nums; pointer-events: none; }
+  .body { display: none; border-top: 1px solid var(--line); padding: 10px 12px 12px; }
+  .panel.open .body { display: block; }
+  .row { display: grid; grid-template-columns: 150px 1fr; align-items: center; gap: 10px; padding: 4px 0; }
+  .row.two { grid-template-columns: 150px 1fr 1fr; }
+  .row .label { font-size: 0.92rem; }
+  .row .label .ko { color: var(--muted); margin-left: 4px; }
+  .row .stemplayer { display: grid; grid-template-columns: 32px 1fr; gap: 8px; align-items: center; }
+  .colhead { color: var(--muted); font-size: 0.88rem; padding: 2px 0 6px; }
+  .colhead .row { padding: 0; }
+  .empty { color: var(--muted); font-style: italic; padding: 6px 0; }
+  footer { margin-top: 48px; color: var(--muted); font-size: 0.88rem; }
+  @media (max-width: 640px) {
+    .row, .row.two { grid-template-columns: 1fr; gap: 4px; }
+    .row.two .stemplayer + .stemplayer { margin-top: 4px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header id="header"></header>
+  <div id="sections"></div>
+  <footer id="footer"></footer>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/wavesurfer.js@7.12.11/dist/wavesurfer.min.js"></script>
+<script>
+(async function () {
+  const data = await (await fetch('data.json', { cache: 'no-cache' })).json();
+  const classes = data.meta.classes;                       // page order, {slug, en, ko}
+  const classBySlug = Object.fromEntries(classes.map(c => [c.slug, c]));
+  const players = [];                                      // every WaveSurfer instance, for one-at-a-time
+
+  // ---------------------------------------------------------------- helpers
+  const el = (tag, attrs = {}, ...children) => {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(attrs)) {
+      if (key === 'class') node.className = value;
+      else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+      else if (value !== null && value !== undefined) node.setAttribute(key, value);
+    }
+    for (const child of children) if (child !== null && child !== undefined) node.append(child);
+    return node;
+  };
+  const fmtTime = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  const fmtDb = v => `${v.toFixed(1)} dB`;
+  const scoreText = (item, labels) => {
+    if (!item.scores) return null;
+    return Object.entries(item.scores)
+      .filter(([, s]) => s)
+      .map(([key, s]) => `${labels[key]} input ${fmtDb(s.si_sdr_db)}`)
+      .join(' · ');
+  };
+
+  // ---------------------------------------------------------------- players
+  const pauseOthers = current => players.forEach(p => { if (p !== current && p.isPlaying()) p.pause(); });
+
+  async function makePlayer(container, file, duration, height) {
+    const peaks = await (await fetch(file.peaks)).json();
+    const wrap = el('div', { class: 'player', tabindex: '0', role: 'group', 'aria-label': file.audio });
+    const time = el('span', { class: 'time' }, `0:00 / ${fmtTime(duration)}`);
+    container.append(wrap);
+    wrap.append(time);
+    const ws = WaveSurfer.create({
+      container: wrap, url: file.audio, peaks: [peaks.data], duration,
+      height, waveColor: getComputedStyle(document.documentElement).getPropertyValue('--wave').trim(),
+      progressColor: getComputedStyle(document.documentElement).getPropertyValue('--progress').trim(),
+      cursorWidth: 1, barWidth: 2, barGap: 1, barRadius: 1, normalize: false, dragToSeek: true,
+    });
+    ws.on('play', () => pauseOthers(ws));
+    ws.on('timeupdate', t => { time.textContent = `${fmtTime(t)} / ${fmtTime(duration)}`; });
+    ws.on('interaction', () => wrap.focus());
+    wrap.addEventListener('keydown', e => {
+      if (e.code === 'Space' || e.key === ' ') { e.preventDefault(); ws.playPause(); }
+    });
+    players.push(ws);
+    return { ws, wrap };
+  }
+
+  // ---------------------------------------------------------------- panel bodies
+  function stemPlayerCell(file, duration) {
+    const cell = el('div', { class: 'stemplayer' });
+    const btn = el('button', { class: 'icon', 'aria-label': 'play stem' }, '▶');
+    const holder = el('div');
+    cell.append(btn, holder);
+    makePlayer(holder, file, duration, 40).then(({ ws, wrap }) => {
+      btn.addEventListener('click', () => { ws.playPause(); wrap.focus(); });
+      ws.on('play', () => { btn.textContent = '❚❚'; });
+      ws.on('pause', () => { btn.textContent = '▶'; });
+      ws.on('finish', () => { btn.textContent = '▶'; });
+    });
+    return cell;
+  }
+
+  function stemLabel(slug) {
+    const c = classBySlug[slug];
+    return el('div', { class: 'label' }, c.en, el('span', { class: 'ko' }, `(${c.ko})`));
+  }
+
+  function fillBody(body, item) {
+    const duration = item.window.length_s;
+    const two = item.variants.length === 2;
+    if (two) {
+      // column headers + the two inputs side by side
+      const head = el('div', { class: 'colhead' },
+        el('div', { class: 'row two' }, el('div'), el('div', {}, item.variants[0].label), el('div', {}, item.variants[1].label)));
+      body.append(head);
+      body.append(el('div', { class: 'row two' }, el('div', { class: 'label' }, 'input'),
+        stemPlayerCell(item.variants[0].input, duration), stemPlayerCell(item.variants[1].input, duration)));
+    }
+    if (item.stems.length === 0) body.append(el('div', { class: 'empty' }, 'no stem above the audibility gate'));
+    for (const slug of item.stems) {
+      const row = el('div', { class: two ? 'row two' : 'row' }, stemLabel(slug));
+      for (const variant of item.variants) row.append(stemPlayerCell(variant.stems[slug], duration));
+      body.append(row);
+    }
+  }
+
+  // ---------------------------------------------------------------- panels
+  function makePanel(item) {
+    const panel = el('div', { class: 'panel', id: `item-${item.id}` });
+    const play = el('button', { class: 'icon', 'aria-label': 'play input' }, '▶');
+    const chev = el('button', { class: 'chev', 'aria-label': 'expand' }, '⌄');
+    const title = el('div', { class: 'title' },
+      el('div', {}, el('span', { class: 'name' }, item.title), item.genre ? el('span', { class: 'genre' }, ` (${item.genre})`) : null),
+      item.scores ? el('div', { class: 'scores' }, scoreText(item, data.meta.variant_labels)) : null,
+      item.note ? el('div', { class: 'note' }, item.note) : null);
+    const headwave = el('div', { class: 'headwave' });
+    const body = el('div', { class: 'body' });
+    panel.append(el('div', { class: 'head' }, play, title, chev), headwave, body);
+
+    let filled = false;
+    const expand = () => {
+      panel.classList.add('open');
+      if (!filled) { filled = true; fillBody(body, item); }
+    };
+    const toggle = () => { if (panel.classList.contains('open')) panel.classList.remove('open'); else expand(); };
+    chev.addEventListener('click', toggle);
+
+    // header player = the model input of the first variant (Σstem mix, or the recording)
+    makePlayer(headwave, item.variants[0].input, item.window.length_s, 56).then(({ ws, wrap }) => {
+      play.addEventListener('click', () => { if (ws.isPlaying()) ws.pause(); else { ws.play(); expand(); } wrap.focus(); });
+      ws.on('play', () => { play.textContent = '❚❚'; });
+      ws.on('pause', () => { play.textContent = '▶'; });
+      ws.on('finish', () => { play.textContent = '▶'; });
+    });
+    return panel;
+  }
+
+  // ---------------------------------------------------------------- page
+  const page = data.meta.page;
+  document.getElementById('header').append(
+    el('h1', {}, page.title),
+    el('p', { class: 'authors' }, `${page.authors} · ${page.venue}`));
+
+  const sectionsRoot = document.getElementById('sections');
+  for (const section of data.sections) {
+    const node = el('section', { id: section.id }, el('h2', {}, section.title), el('p', { class: 'blurb' }, section.blurb));
+    if (section.items.length === 0) node.append(el('div', { class: 'empty' }, 'no items'));
+    for (const item of section.items) node.append(makePanel(item));
+    sectionsRoot.append(node);
+  }
+  document.getElementById('footer').append(
+    `Checkpoint ${data.meta.model.checkpoint.split('/').pop()} · rendered ${data.meta.model.render_date} · built ${data.meta.built_at} (code ${data.meta.source_commit}). Audio: AI Hub dataset 71955 test split and public recordings, 30 s excerpts for research demonstration.`);
+})();
+</script>
+</body>
+</html>

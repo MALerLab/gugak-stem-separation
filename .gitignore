@@ -101,3 +101,10 @@ MEMO.md
 
 # --- LBD-temp/: throwaway zero-shot weights for the LBD paper, user cleans up after ---
 LBD-temp/
+
+# --- demo_web/site: index.html is source; everything else is built by
+#     scripts/build_demo_web.py and published to the separate jae-gye/gugak-demo repo ---
+demo_web/site/audio/
+demo_web/site/peaks/
+demo_web/site/data.json
+demo_web/site/README.md

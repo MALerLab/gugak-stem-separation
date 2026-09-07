@@ -1,0 +1,50 @@
+# demo_web/manifest.yaml — WHICH items appear on the listening page, in page order.
+# This is the only file that changes when the song list changes. Edit by hand, then:
+#   uv run python scripts/build_demo_web.py && bash scripts/publish_demo_web.sh
+#
+# Three sections, rendered in this order. Item keys:
+#   id              unique, filesystem-safe — becomes the audio/<id>/ and peaks/<id>/ folder
+#   source          test song id (0253_민속악_산조) or demo-set v2 item id (pansori)
+#   display_title   optional — defaults to the dataset title (test) / v2 short_title (real-world)
+#   genre           optional — English genre label; derived from genreSub for test songs
+#   window          optional {start_s, length_s} in seconds — length defaults to 30, start to the
+#                   v1 median-audible-class rule (test) or 0 (real-world clips are already 30 s)
+#   stems_override  optional {include: [...], exclude: [...]} — class keys in Hangul, forces a
+#                   stem in/out of the audible set regardless of the RMS gate
+#   note            optional one-liner shown under the title
+# master_gap items must reference a test song; they get both input variants automatically.
+# A song may appear in both genre and master_gap (different ids).
+#
+# ⚠️ PLACEHOLDER LIST (2026-09-06): genre = the song nearest its genre's median Σstem SI-SDR;
+#    master_gap = the song nearest its genre's median Σstem−master gap; real_world = the 12
+#    YouTube primary items of demo set v2. Real-world `genre` labels are my guesses — fix them.
+
+sections:
+  genre:
+    - {id: pansori_0557,      source: 0557_민속악_판소리}
+    - {id: sanjo_0174,        source: 0174_민속악_산조}
+    - {id: contemporary_0961, source: 0961_창작국악_창작국악}
+    - {id: pungnyu_0064,      source: 0064_정악_풍류음악}
+    - {id: minyo_0737,        source: 0737_민속악_민요}
+    - {id: court_0170,        source: 0170_정악_궁중음악}
+    - {id: daepungnyu_0419,   source: 0419_민속악_대풍류}
+
+  real_world:
+    - {id: rw_salpuri,             source: salpuri,              genre: Sinawi}
+    - {id: rw_sinawi,              source: sinawi,               genre: Sinawi}
+    - {id: rw_gayageum_sanjo,      source: gayageum_sanjo,       genre: Sanjo}
+    - {id: rw_geomungo_sanjo,      source: geomungo_sanjo,       genre: Sanjo}
+    - {id: rw_yeongsanhoesang,     source: yeongsanhoesang_hall, genre: Pungnyu}
+    - {id: rw_jeongsangjigok,      source: jeongsangjigok,       genre: Pungnyu}
+    - {id: rw_monggeumpo_taryeong, source: monggeumpo_taryeong,  genre: Minyo}
+    - {id: rw_janghanga,           source: janghanga,            genre: contemporary Gugak}
+    - {id: rw_haegeum_concerto,    source: haegeum_concerto,     genre: contemporary Gugak}
+    - {id: rw_janggochum,          source: janggochum,           genre: percussion dance}
+    - {id: rw_daechwita,           source: daechwita,            genre: Daechwita}
+    - {id: rw_pansori,             source: pansori,              genre: Pansori}
+
+  master_gap:
+    - {id: gap_sanjo_0253,        source: 0253_민속악_산조}
+    - {id: gap_contemporary_0811, source: 0811_창작국악_창작국악}
+    - {id: gap_pansori_0523,      source: 0523_민속악_판소리}
+    - {id: gap_minyo_0717,        source: 0717_민속악_민요}
