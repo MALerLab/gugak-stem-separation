@@ -64,6 +64,9 @@ class EvalJob:
     class_map: tuple[tuple[str, str], ...]  # model head -> taxonomy class (zero-shot:
                                        # e.g. drums -> 타악기); unmapped heads find no
                                        # reference and score as absent
+    master_lag_table: Path | None      # master_lag manifest (scripts/master_lag_scan.py);
+                                       # aligns the master to its stems before scoring.
+                                       # None = unaligned (the pre-2026-09-05 numbers)
     config_hash: str                   # sha256 of the eval config file, first 12 hex
 
 
@@ -107,6 +110,8 @@ def load_eval_job(config_path: Path) -> EvalJob:
         render_preds_only=bool(render.get("preds_only", False)),
         render_out_dir=(REPO_ROOT / render["out_dir"]) if render_enabled else None,
         class_map=tuple((raw.get("class_map") or {}).items()),
+        master_lag_table=((REPO_ROOT / raw["master_lag_table"])
+                          if raw.get("master_lag_table") else None),
         config_hash=hashlib.sha256(raw_bytes).hexdigest()[:12],
     )
 
@@ -154,8 +159,12 @@ def classify_and_score(reference: np.ndarray | None, estimate: np.ndarray,
 
 
 def separate_song(model, msst_config, device: torch.device, mixture_path: Path,
-                  model_type: str) -> tuple[dict[str, np.ndarray], float]:
+                  model_type: str, start_frame: int = 0) -> tuple[dict[str, np.ndarray], float]:
     """Run MSST chunked inference on one full song.
+
+    Args:
+        start_frame: first mixture frame to read — a late master's lag (see
+            references.MasterSong.mixture_start_frame); 0 for every other case.
 
     Returns:
         (class -> estimate (channels, samples) float32, song duration in seconds).
@@ -163,7 +172,7 @@ def separate_song(model, msst_config, device: torch.device, mixture_path: Path,
     from utils.model_utils import demix   # importable after load_msst_model's path edit
 
     # float64 read, transposed — byte-identical to MSST valid.py's read path
-    mixture, sample_rate = soundfile.read(mixture_path, always_2d=True)
+    mixture, sample_rate = soundfile.read(mixture_path, start=start_frame, always_2d=True)
     expected_rate = model_sample_rate(msst_config)
     if expected_rate != int(sample_rate):
         raise ValueError(f"{mixture_path}: sample rate {sample_rate} != config "
@@ -201,7 +210,13 @@ def build_song_index(job: EvalJob, msst_config, split: str,
     else:
         source_manifest = pd.read_parquet(
             REPO_ROOT / model_cfg["gugak_mix"]["source_manifest"])
-        songs = master_songs(source_manifest, split, song_ids, classes, REPO_ROOT)
+        lag_by_song = None
+        if job.master_lag_table is not None:
+            lag_table = pd.read_parquet(job.master_lag_table)
+            lag_table = lag_table[lag_table.split == split]
+            lag_by_song = dict(zip(lag_table.song_id, lag_table.lag_samples.astype(int)))
+        songs = master_songs(source_manifest, split, song_ids, classes, REPO_ROOT,
+                             lag_by_song=lag_by_song)
     return rows, songs
 
 
@@ -218,7 +233,8 @@ def render_listening_copy(out_dir: Path, mixture_path: Path,
     out_dir.mkdir(parents=True, exist_ok=True)
     sample_rate = soundfile.info(mixture_path).samplerate
     if not preds_only:
-        mixture, sample_rate = soundfile.read(mixture_path, always_2d=True)
+        mixture, sample_rate = soundfile.read(
+            mixture_path, start=song.mixture_start_frame, always_2d=True)
         soundfile.write(out_dir / "mixture.flac", mixture, sample_rate,
                         subtype="PCM_24")
     for stem_class in classes:
@@ -270,7 +286,8 @@ def run(job: EvalJob, overwrite: bool = False) -> Path:
             song = songs[entry.song_id]
             started = time.time()
             separated, duration_sec = separate_song(
-                model, msst_config, device, song.mixture_path, job.model_type)
+                model, msst_config, device, song.mixture_path, job.model_type,
+                start_frame=song.mixture_start_frame)
 
             class_map = dict(job.class_map)
             for stem_class in classes:
@@ -288,6 +305,7 @@ def run(job: EvalJob, overwrite: bool = False) -> Path:
                     "song_id": entry.song_id, "genre_sub": entry.genre_sub,
                     "stem_class": target_class, **scored,
                     "duration_sec": duration_sec,
+                    "lag_samples": getattr(song, "lag_samples", 0),
                     "config_hash": job.config_hash, "git_commit": commit,
                     "seed": job.seed, "timestamp": timestamp,
                 })

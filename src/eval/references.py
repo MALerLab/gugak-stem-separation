@@ -20,6 +20,14 @@ master — mixture is the publisher master from the ingest store; references are
 
 Audio is read at soundfile's default float64, matching MSST's valid.py reads, so
 metric arithmetic is bit-identical to the training-time pipeline (gate G5).
+
+Master ↔ stem alignment (found 2026-09-05, scripts/master_lag_scan.py): in 19 of the
+135 test songs the publisher master is a fixed integer number of samples late or early
+relative to its own stems. When `master_songs` is given the `master_lag` table, each
+MasterSong carries `lag_samples` and the shift is undone before scoring: a late master
+(lag > 0) is read from its lag-th frame (`mixture_start_frame`, applied by the runner),
+an early master (lag < 0) has the stems' first |lag| frames skipped instead. No table ⇒
+lag 0 everywhere, i.e. the pre-2026-09-05 behaviour.
 """
 from __future__ import annotations
 
@@ -31,9 +39,9 @@ import pandas as pd
 import soundfile
 
 
-def _read_transposed(path: Path, frames: int = -1) -> np.ndarray:
+def _read_transposed(path: Path, frames: int = -1, start: int = 0) -> np.ndarray:
     """Read audio as (channels, samples) float64, mono expanded to one row."""
-    audio, _ = soundfile.read(path, frames=frames, always_2d=True)
+    audio, _ = soundfile.read(path, frames=frames, start=start, always_2d=True)
     return audio.T
 
 
@@ -46,6 +54,11 @@ class SumstemSong:
     @property
     def mixture_path(self) -> Path:
         return self.song_dir / f"mixture.{self.extension}"
+
+    @property
+    def mixture_start_frame(self) -> int:
+        """Σstem mixture and references share one timeline by construction."""
+        return 0
 
     def reference(self, stem_class: str) -> np.ndarray | None:
         """The class target as (channels, samples), or None when no file exists."""
@@ -62,19 +75,27 @@ class MasterSong:
     # per class: [(stem audio path, stem frames), ...] from the source manifest
     stems_by_class: dict[str, list[tuple[Path, int]]]
     min_frames: int          # shortest stem of the song (trim-to-shortest, never pad)
+    lag_samples: int = 0     # master delay vs the stems (master_lag table); 0 = aligned
 
     @property
     def mixture_path(self) -> Path:
         return self.master_path
+
+    @property
+    def mixture_start_frame(self) -> int:
+        """First master frame to feed the model — skips a late master's leading lag."""
+        return max(self.lag_samples, 0)
 
     def reference(self, stem_class: str) -> np.ndarray | None:
         """Sum of the class's ingested stems at native scale, or None if class absent."""
         stems = self.stems_by_class.get(stem_class)
         if not stems:
             return None
+        # an early master (lag < 0) is aligned from the stem side instead
+        start = max(-self.lag_samples, 0)
         target: np.ndarray | None = None
         for path, _ in stems:
-            audio = _read_transposed(path, frames=self.min_frames)
+            audio = _read_transposed(path, frames=self.min_frames - start, start=start)
             if audio.shape[0] == 1:
                 audio = np.repeat(audio, 2, axis=0)      # centered mono
             target = audio if target is None else target + audio
@@ -108,7 +129,8 @@ def sumstem_songs(sumstem_root: Path, split: str, song_ids: list[str],
 
 
 def master_songs(source_manifest: pd.DataFrame, split: str, song_ids: list[str],
-                 classes: list[str], repo_root: Path) -> dict[str, MasterSong]:
+                 classes: list[str], repo_root: Path,
+                 lag_by_song: dict[str, int] | None = None) -> dict[str, MasterSong]:
     """Master-variant song objects for a split, resolved from the source manifest.
 
     Args:
@@ -118,6 +140,9 @@ def master_songs(source_manifest: pd.DataFrame, split: str, song_ids: list[str],
         classes: modeled stem classes — stems outside them (quarantined classes) are
             excluded from the references, mirroring the Σstem build.
         repo_root: prefix for the manifest's repo-relative out_path values.
+        lag_by_song: song_id -> lag_samples from the master_lag table. None = no
+            alignment (lag 0). When given, every song must have an entry — a missing
+            song means the table was scanned for a different split, so fail loudly.
     """
     subset = source_manifest[(source_manifest.dataset == "71955")
                              & (source_manifest.split == split)]
@@ -135,8 +160,12 @@ def master_songs(source_manifest: pd.DataFrame, split: str, song_ids: list[str],
         for row in group.itertuples():
             stems_by_class.setdefault(str(row.stem_group), []).append(
                 (repo_root / str(row.out_path), int(row.out_frames)))
+        if lag_by_song is not None and song_id not in lag_by_song:
+            raise KeyError(f"{song_id}: no row in the master_lag table for split {split} "
+                           "— run scripts/master_lag_scan.py for this split")
         songs[song_id] = MasterSong(
             master_path=repo_root / str(masters.loc[song_id, "out_path"]),
             stems_by_class=stems_by_class,
-            min_frames=int(group.out_frames.min()))
+            min_frames=int(group.out_frames.min()),
+            lag_samples=int(lag_by_song[song_id]) if lag_by_song is not None else 0)
     return songs

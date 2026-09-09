@@ -1,0 +1,17 @@
+# master_lag_scan.yaml — settings for scripts/master_lag_scan.py.
+# Measures, per eval song, the time offset between the publisher master and the sum of
+# its ingested stems (cross-correlation over the full song, mono downmix, native scale).
+# Output: the `master_lag` manifest table, which the master-variant eval consumes
+# (eval config key `master_lag_table`) to align the master to the stems before scoring.
+
+master_lag_scan:
+  source_manifest: manifests/parquet/source_manifest.parquet
+  eval_manifest: manifests/parquet/eval_manifest.parquet
+  # splits to scan — test only for now (val when the master-variant val tables are
+  # revisited after the LBD deadline)
+  splits: [test]
+  # table basename, resolved by table_paths() into manifests/parquet + manifests/csv
+  out_table: manifests/master_lag
+  # one song per worker; the peak cost is one FFT of the next power of two above
+  # 2 × song length (float64 → ~8 GB for a 19-minute song)
+  workers: 12

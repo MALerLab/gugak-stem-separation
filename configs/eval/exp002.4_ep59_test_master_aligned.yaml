@@ -1,0 +1,31 @@
+# eval-job config — exp002.4_ep59, TEST split, MASTER variant, master ALIGNED to its stems via
+# the master_lag table (scripts/master_lag_scan.py; 19/135 test masters carry a fixed
+# sample offset that collapses sample-wise metrics). Otherwise identical to the
+# unaligned exp002.4_ep59 master run: same metrics / silence / aggregation, rows only.
+#
+# Run:
+#   uv run python -m src.eval.runner --config configs/eval/exp002.4_ep59_test_master_aligned.yaml
+
+run_id: eval_exp002.4_ep59_test_master_aligned
+
+checkpoint: experiments/exp002.4_260813_seed45/checkpoints/model_htdemucs_ep_59_si_sdr_4.8039.ckpt
+model_config: configs/exp002.4_htdemucs_seed45.yaml
+model_type: htdemucs
+
+targets:
+  - {split: test, variant: master}
+
+metrics: [si_sdr, usdr]
+usdr_eps: 1.0e-7
+metric_cap_db: 100.0
+silence_config: configs/silence.yaml
+eval_manifest: manifests/parquet/eval_manifest.parquet
+master_lag_table: manifests/parquet/master_lag.parquet
+out_dir: experiments/exp002.4_260813_seed45/eval
+seed: 42
+device: cuda:1
+
+render:
+  enabled: false
+  songs: []
+  out_dir: null
