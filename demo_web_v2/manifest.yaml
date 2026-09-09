@@ -1,0 +1,67 @@
+# demo_web_v2/manifest.yaml — WHICH items appear on the v2 (trackswitch.js) listening page, in page order.
+# Sibling of demo_web/manifest.yaml; v1 stays frozen as the backup — edit THIS one from now on.
+# This is the only file that changes when the song list changes. Edit by hand, then:
+#   uv run python scripts/build_demo_web.py --config configs/demo_web_v2.yaml
+#   bash scripts/publish_demo_web.sh configs/demo_web_v2.yaml
+#
+# Three sections, rendered in this order. Item keys:
+#   id              unique, filesystem-safe — becomes the audio/<id>/ and peaks/<id>/ folder
+#   source          test song id (0253_민속악_산조) or demo-set v2 item id (pansori)
+#   display_title   optional — defaults to the dataset title (test) / v2 short_title (real-world)
+#   genre           optional — English genre label; derived from genreSub for test songs
+#   window          optional {start_s, length_s} in seconds — length defaults to 30, start to the
+#                   v1 median-audible-class rule (test) or 0 (real-world clips are already 30 s)
+#   stems_override  optional {include: [...], exclude: [...]} — class keys in Hangul, forces a
+#                   stem in/out of the audible set regardless of the RMS gate
+#   url             optional source link (YouTube), shown under the title
+#   note            optional one-liner shown under the title
+# master_gap items must reference a test song; they get both input variants automatically.
+# A song may appear in both genre and master_gap (different ids).
+#
+# SCREENED LIST (2026-09-07, pending Jae's listening veto):
+#   genre       = per genre, top sum-stem SI-SDR among songs ≥ 120 s (top-3 shortlist), activity
+#                 (fraction of present classes sounding at once) as tie-break
+#   master_gap  = the same picks for 산조 · 창작국악 · 판소리 · 민요 (all lag-free masters)
+#   real_world  = the four finalists of the 2026-09-08 listening pass (정악풍류 별곡 · 가야금산조 ·
+#                 장한가 · 판소리 사랑가); `note` = programme credits, `url` = YouTube source at the
+#                 excerpt's timestamp, stems_override = Jae's per-item listening decisions.
+
+sections:
+  genre:
+    - {id: pansori_0641,      source: 0641_민속악_판소리}
+    - {id: sanjo_0321,        source: 0321_민속악_산조}
+    - {id: contemporary_0831, source: 0831_창작국악_창작국악}
+    - {id: pungnyu_0117,      source: 0117_정악_풍류음악}
+    - {id: minyo_0761,        source: 0761_민속악_민요}
+    - {id: court_0173,        source: 0173_정악_궁중음악}
+    - {id: daepungnyu_0419,   source: 0419_민속악_대풍류}
+
+  master_gap:
+    - {id: gap_sanjo_0321,        source: 0321_민속악_산조}
+    - {id: gap_contemporary_0831, source: 0831_창작국악_창작국악}
+    - {id: gap_pansori_0641,      source: 0641_민속악_판소리}
+    - {id: gap_minyo_0761,        source: 0761_민속악_민요}
+
+  real_world:
+    - id: rw_yeongsanhoesang
+      source: yeongsanhoesang_hall
+      genre: Pungnyu
+      url: https://www.youtube.com/watch?v=_opLG86rrtM&t=55
+      note: "Instruments: 피리 · 대금 · 해금 · 가야금 · 거문고 · 단소 · 양금 · 장구"
+      stems_override: {include: [양금], exclude: [가야금]}      # 양금 sits just under the gate; 가야금 was absorbed by 거문고
+    - id: rw_gayageum_sanjo
+      source: gayageum_sanjo
+      genre: Sanjo
+      url: https://www.youtube.com/watch?v=zTAWuGlw0z0&t=230
+      note: "Instruments: 가야금 · 장구"
+    - id: rw_janghanga
+      source: janghanga
+      genre: contemporary Gugak
+      url: https://www.youtube.com/watch?v=73E8ZL0CdG0&t=3458
+      note: "Instruments: 대금 · 거문고 · 아쟁 · 장구"
+    - id: rw_pansori
+      source: pansori
+      genre: Pansori
+      url: https://www.youtube.com/watch?v=9aFwc2nRQN4&t=65
+      note: "Instruments: 소리 · 북"
+      stems_override: {include: [피리, 해금, 타악기], exclude: [가야금, 거문고, 기타, 대금, 아쟁, 양금]}   # voice has no class; it lands in 피리/해금

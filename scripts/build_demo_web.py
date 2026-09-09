@@ -37,7 +37,6 @@ import soundfile
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SECTION_ORDER = ("genre", "real_world", "master_gap")
 TEST_VARIANT_ORDER = ("sumstem", "master")
 INPUT_FILE_STEM = "input"
 
@@ -263,7 +262,8 @@ def resolve_item(item: dict, section: str, ctx: BuildContext) -> dict:
                     "scores": None, "master_lag_ms": None}
     resolved.update({"id": str(item["id"]), "source": source, "variants": variants,
                      "window": {"start_s": round(float(start_s), 3), "length_s": round(float(length_s), 3)},
-                     "note": item.get("note"), "stems_override": item.get("stems_override") or {}})
+                     "note": item.get("note"), "url": item.get("url"),
+                     "stems_override": item.get("stems_override") or {}})
     return resolved
 
 
@@ -306,8 +306,11 @@ def build_item(resolved: dict, ctx: BuildContext, site_dir: Path, force: bool) -
             peaks_rel = Path("peaks") / resolved["id"] / variant["key"] / f"{file_stem}.json"
             if force or not (site_dir / audio_rel).exists():
                 encode_audio(audio, sample_rate, site_dir / audio_rel, cfg["audio"])
-            write_json(site_dir / peaks_rel, compute_peaks(audio, sample_rate, int(cfg["peaks"]["points"])))
-            files_record[file_stem] = {"audio": audio_rel.as_posix(), "peaks": peaks_rel.as_posix()}
+            files_record[file_stem] = {"audio": audio_rel.as_posix()}
+            # peaks: always for the input; for stems only when the page draws them from peaks
+            if name == INPUT_FILE_STEM or cfg["peaks"].get("stems", True):
+                write_json(site_dir / peaks_rel, compute_peaks(audio, sample_rate, int(cfg["peaks"]["points"])))
+                files_record[file_stem]["peaks"] = peaks_rel.as_posix()
         variant_records.append({
             "key": variant["key"], "label": variant["label"],
             "input": files_record.pop(INPUT_FILE_STEM), "stems": files_record,
@@ -315,7 +318,7 @@ def build_item(resolved: dict, ctx: BuildContext, site_dir: Path, force: bool) -
         })
     return {"id": resolved["id"], "title": resolved["title"], "genre": resolved["genre"],
             "genre_ko": resolved["genre_ko"], "kind": resolved["kind"], "source": resolved["source"],
-            "window": window, "note": resolved["note"], "scores": resolved["scores"],
+            "window": window, "note": resolved["note"], "url": resolved["url"], "scores": resolved["scores"],
             "master_lag_ms": resolved["master_lag_ms"],
             "stems": [ctx.slug_of[key] for key in stems], "variants": variant_records}
 
@@ -384,7 +387,7 @@ def build(cfg: dict, force: bool) -> dict:
     site_dir.mkdir(parents=True, exist_ok=True)
     seen_ids: set[str] = set()
     sections = []
-    for section_key in SECTION_ORDER:
+    for section_key in cfg["sections"]:                 # page order = key order in the config
         items = manifest.get("sections", {}).get(section_key) or []
         records = []
         for item in items:

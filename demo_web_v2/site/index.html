@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gugak nine-stem separation — listening demo</title>
+<style>
+  :root {
+    --bg: #fbfaf7; --fg: #1d1d1b; --muted: #6b6a66; --line: #e2dfd8; --panel: #ffffff;
+    --wave: #c9c5bb; --progress: #2f5d8a; --accent: #2f5d8a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --fg: #ecebe6; --muted: #9c9a93; --line: #2d2d2a; --panel: #1e1e1c;
+            --wave: #4d4c48; --progress: #7fb0dc; --accent: #7fb0dc; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans KR", sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 28px 16px 64px; }
+  header h1 { font-size: 1.45rem; line-height: 1.25; margin: 0 0 6px; }
+  header .authors { margin: 0; color: var(--muted); }
+  header .credit { font-size: 0.92rem; margin-top: 4px; }
+  header .credit a { color: inherit; }
+  section { margin-top: 36px; }
+  section h2 { font-size: 1.15rem; margin: 0 0 2px; }
+  section .blurb { margin: 0 0 14px; color: var(--muted); font-size: 0.95rem; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 10px; }
+  .head { display: grid; grid-template-columns: 40px 1fr 32px; align-items: center; gap: 10px; padding: 10px 12px 8px; }
+  .title { min-width: 0; }
+  .title .name { font-weight: 600; }
+  .title .genre { color: var(--muted); }
+  .title .scores { color: var(--muted); font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+  .title .note { color: var(--muted); font-size: 0.88rem; }
+  .title .note a { color: inherit; }
+  button.icon { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel);
+                color: var(--fg); cursor: pointer; font-size: 14px; line-height: 1; padding: 0; }
+  button.icon:hover, button.icon:focus-visible { border-color: var(--accent); color: var(--accent); outline: none; }
+  button.chev { border: none; background: none; font-size: 18px; color: var(--muted); cursor: pointer; padding: 4px; }
+  button.chev:hover, button.chev:focus-visible { color: var(--accent); outline: none; }
+  .panel.open button.chev { transform: rotate(180deg); }
+  .preview { position: relative; margin: 0 12px 10px; height: 56px; cursor: pointer; }
+  .preview canvas { display: block; width: 100%; height: 56px; }
+  .preview .time { position: absolute; right: 6px; bottom: 2px; font-size: 0.78rem; color: var(--muted);
+                   background: var(--panel); padding: 0 4px; border-radius: 3px; font-variant-numeric: tabular-nums; pointer-events: none; }
+  .body { display: none; border-top: 1px solid var(--line); padding: 12px; }
+  .panel.open .body { display: block; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .pair .colhead { color: var(--muted); font-size: 0.9rem; margin-bottom: 4px; }
+  .hint { color: var(--muted); font-size: 0.85rem; margin: 0 0 8px; }
+  .empty { color: var(--muted); font-style: italic; padding: 6px 0; }
+  footer { margin-top: 48px; color: var(--muted); font-size: 0.88rem; }
+  @media (max-width: 760px) { .pair { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <header id="header"></header>
+  <div id="sections"></div>
+  <footer id="footer"></footer>
+</main>
+
+<script src="vendor/trackswitch.js"></script>
+<script>
+(async function () {
+  const data = await (await fetch('data.json', { cache: 'no-cache' })).json();
+  const classBySlug = Object.fromEntries(data.meta.classes.map(c => [c.slug, c]));
+  const controllers = [];                                  // every trackswitch controller on the page
+
+  // ---------------------------------------------------------------- helpers
+  const el = (tag, attrs = {}, ...children) => {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(attrs)) {
+      if (key === 'class') node.className = value;
+      else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+      else if (value !== null && value !== undefined) node.setAttribute(key, value);
+    }
+    for (const child of children) if (child !== null && child !== undefined) node.append(child);
+    return node;
+  };
+  const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const fmtTime = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  // one score per input variant the panel actually plays (test split: sum-stem only; master split: both)
+  const scoreText = item => item.variants.map(v => item.scores[v.key])
+    .map((s, i) => s ? `${item.variants[i].label} input ${s.si_sdr_db.toFixed(1)} dB` : null).filter(Boolean).join(' · ');
+  const stemTitle = slug => `${classBySlug[slug].en} (${classBySlug[slug].ko})`;
+
+  // ---------------------------------------------------------------- trackswitch players
+  // One player per input variant: the input track starts active (solo), stems start off.
+  // Toggling a stem's button switches it in mid-phrase; all tracks share one playhead.
+  function trackswitchInit(variant, item) {
+    const tracks = [{ title: `${variant.label} (input)`, solo: true,
+                      sources: [{ src: variant.input.audio, type: 'audio/mpeg' }] }];
+    for (const slug of item.stems) {
+      tracks.push({ title: stemTitle(slug), sources: [{ src: variant.stems[slug].audio, type: 'audio/mpeg' }] });
+    }
+    return {
+      features: { exclusiveSolo: false, muteOtherPlayerInstances: true, keyboard: true, seekBar: true,
+                  timer: true, repeat: true, presets: false, globalVolume: false, looping: false },
+      ui: [
+        { type: 'waveform', height: 72, waveformSource: 'audible', playbackFollowMode: 'off', timer: false },
+        { type: 'trackGroup', trackGroup: tracks },
+      ],
+    };
+  }
+
+  // Mount + start loading straight away (no "Activate" gate: the panel was opened on purpose).
+  // Returns the controller with a `ready` promise that resolves once the audio is decoded.
+  function mountPlayer(container, variant, item) {
+    const root = el('div');
+    container.append(root);
+    const controller = TrackSwitch.createDefaultTrackSwitch(root, trackswitchInit(variant, item));
+    controller.ready = new Promise(resolve => {
+      if (controller.getState().isLoaded) return resolve();
+      controller.on('loaded', () => resolve());
+    });
+    controller.load().catch(() => {});
+    controllers.push(controller);
+    return controller;
+  }
+
+  // ---------------------------------------------------------------- collapsed preview (visual only)
+  function drawPreview(canvas, peaks, progress) {
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width = canvas.clientWidth * devicePixelRatio;
+    const height = canvas.height = canvas.clientHeight * devicePixelRatio;
+    ctx.clearRect(0, 0, width, height);
+    const pairs = peaks.data.length / 2;
+    const barWidth = width / pairs;
+    const mid = height / 2;
+    for (let i = 0; i < pairs; i++) {
+      const low = peaks.data[2 * i], high = peaks.data[2 * i + 1];
+      ctx.fillStyle = (i / pairs) < progress ? cssVar('--progress') : cssVar('--wave');
+      ctx.fillRect(i * barWidth, mid - high * mid, Math.max(1, barWidth - 0.5 * devicePixelRatio), (high - low) * mid || 1);
+    }
+  }
+
+  // ---------------------------------------------------------------- panels
+  function makePanel(item) {
+    const panel = el('div', { class: 'panel', id: `item-${item.id}` });
+    const play = el('button', { class: 'icon', 'aria-label': 'play input' }, '▶');
+    const chev = el('button', { class: 'chev', 'aria-label': 'expand' }, '⌄');
+    const title = el('div', { class: 'title' },
+      el('div', {}, el('span', { class: 'name' }, item.title), item.genre ? el('span', { class: 'genre' }, ` (${item.genre})`) : null),
+      item.scores ? el('div', { class: 'scores' }, scoreText(item)) : null,
+      item.note ? el('div', { class: 'note' }, item.note) : null,
+      item.url ? el('div', { class: 'note' }, el('a', { href: item.url, target: '_blank', rel: 'noopener' }, 'source: YouTube ↗')) : null);
+    const canvas = el('canvas');
+    const time = el('span', { class: 'time' }, `0:00 / ${fmtTime(item.window.length_s)}`);
+    const preview = el('div', { class: 'preview', title: 'seek' }, canvas, time);
+    const body = el('div', { class: 'body' });
+    panel.append(el('div', { class: 'head' }, play, title, chev), preview, body);
+
+    let peaks = null;
+    fetch(item.variants[0].input.peaks).then(r => r.json()).then(p => { peaks = p; drawPreview(canvas, peaks, 0); });
+    window.addEventListener('resize', () => { if (peaks) drawPreview(canvas, peaks, lastProgress); });
+
+    // the primary controller drives the header: first variant (sum-stem mix, or the recording)
+    let primary = null, lastProgress = 0;
+    const mountBody = () => {
+      if (primary) return primary;
+      const two = item.variants.length === 2;
+      if (item.stems.length === 0) body.append(el('p', { class: 'hint' }, 'no stem above the audibility gate — input only'));
+      if (two) {
+        const pair = el('div', { class: 'pair' });
+        body.append(pair);
+        item.variants.forEach((variant, index) => {
+          const column = el('div', {}, el('div', { class: 'colhead' }, variant.label));
+          pair.append(column);
+          const controller = mountPlayer(column, variant, item);
+          if (index === 0) primary = controller;
+        });
+      } else {
+        primary = mountPlayer(body, item.variants[0], item);
+      }
+      primary.on('position', ({ position, duration }) => {
+        lastProgress = duration ? position / duration : 0;
+        if (peaks) drawPreview(canvas, peaks, lastProgress);
+        time.textContent = `${fmtTime(position)} / ${fmtTime(duration || item.window.length_s)}`;
+      });
+      return primary;
+    };
+    const expand = () => { panel.classList.add('open'); mountBody(); };
+    chev.addEventListener('click', () => { if (panel.classList.contains('open')) panel.classList.remove('open'); else expand(); });
+    const syncPlayIcon = () => { if (primary) play.textContent = primary.getState().state.playing ? '❚❚' : '▶'; };
+    play.addEventListener('click', async () => {
+      expand();
+      const controller = mountBody();
+      play.textContent = '…';
+      await controller.ready;                              // play() is a no-op before the audio is decoded
+      if (controller.getState().state.playing) controller.pause(); else controller.play();
+      syncPlayIcon();
+    });
+    preview.addEventListener('click', async event => {
+      expand();
+      const controller = mountBody();
+      const fraction = (event.clientX - preview.getBoundingClientRect().left) / preview.clientWidth;
+      await controller.ready;
+      controller.seekTo(fraction * (controller.getState().longestDuration || item.window.length_s));
+    });
+    setInterval(syncPlayIcon, 500);                        // the player's own buttons change state too
+    return panel;
+  }
+
+  // ---------------------------------------------------------------- page
+  const page = data.meta.page;
+  document.getElementById('header').append(
+    el('h1', {}, page.title),
+    el('p', { class: 'authors' }, `${page.authors} · ${page.venue}`),
+    el('p', { class: 'authors credit' }, 'Audio player: ',
+      el('a', { href: 'https://github.com/audiolabs/trackswitch.js' }, 'trackswitch.js'),
+      ' (Werner, Balke, Stöter, Müller and Edler, 2017)'));
+
+  const sectionsRoot = document.getElementById('sections');
+  for (const section of data.sections) {
+    const node = el('section', { id: section.id }, el('h2', {}, section.title), el('p', { class: 'blurb' }, section.blurb));
+    if (section.items.length === 0) node.append(el('div', { class: 'empty' }, 'no items'));
+    for (const item of section.items) node.append(makePanel(item));
+    sectionsRoot.append(node);
+  }
+  document.getElementById('footer').append(
+    `Checkpoint ${data.meta.model.checkpoint.split('/').pop()} · rendered ${data.meta.model.render_date} · built ${data.meta.built_at} (code ${data.meta.source_commit}). `,
+    'Player: ', el('a', { href: 'https://github.com/audiolabs/trackswitch.js' }, 'trackswitch.js'),
+    ' (Werner et al., 2017). Audio: AI Hub dataset 71955 test split and public recordings, 30 s excerpts for research demonstration.');
+})();
+</script>
+</body>
+</html>

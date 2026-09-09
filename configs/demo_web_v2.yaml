@@ -1,0 +1,112 @@
+# configs/demo_web_v2.yaml — build config for the v2 (trackswitch.js) listening page. Sibling of
+# demo_web.yaml; v1 stays frozen as the backup. Paths, encoders and thresholds only — WHICH songs
+# appear lives in demo_web_v2/manifest.yaml, the one file that changes when the song list changes.
+#
+# Rebuild:  uv run python scripts/build_demo_web.py --config configs/demo_web_v2.yaml
+# Publish:  bash scripts/publish_demo_web.sh configs/demo_web_v2.yaml
+
+manifest: demo_web_v2/manifest.yaml
+site_dir: demo_web_v2/site
+
+model:
+  label: exp003.0 BS-RoFormer, epoch 59
+  checkpoint: experiments/exp003.0_260809_bsroformer_pilot/checkpoints/model_bs_roformer_ep_59_si_sdr_10.7013.ckpt
+  render_date: "2026-08-31"          # test-split + demo-set-v2 renders (eval_renders / v2/renders)
+
+page:
+  title: Partially Coherent Mixing for Nine-Stem Source Separation of Korean Traditional (Gugak) Ensembles
+  authors: WonJae Gye · Dasaem Jeong — MALer Lab, Sogang University
+  venue: ISMIR 2026 Late-Breaking Demo
+  blurb: >-
+    Listening demo for exp003.0, a nine-stem BS-RoFormer fine-tuned on the Gugak ensemble dataset
+    (AI Hub 71955). Test-split items report SI-SDR on the model's own input, averaged over the
+    classes present in the song. Real-world items have no isolated stems, so they carry no scores.
+
+sections:                            # page order = key order here; titles/blurbs live here
+  genre:
+    title: Test split
+    blurb: Input is the sum-stem mix, the sum of the isolated stems. One song per genre.
+  real_world:
+    title: Real-world recordings
+    blurb: Concert recordings run through the same checkpoint. No isolated stems exist, so no scores.
+  master_gap:
+    title: Master split
+    blurb: The same song separated from the sum-stem mix and from the publisher's mastered mix, side by side.
+
+# --- test-split inputs: one block per input variant -------------------------------------
+test:
+  eval_manifest: manifests/parquet/eval_manifest.parquet
+  metadata_csv: data/gugak_ensemble_71955/metadata.csv        # song titles (display_title default)
+  master_lag: manifests/parquet/master_lag.parquet             # 19/135 test masters are offset
+  chunk_activities: manifests/parquet/chunk_activities.parquet # drives the default window
+  variants:
+    sumstem:
+      label: sum-stem mix
+      input: data/gugak_ensemble_71955/sumstem_9stem/test/{song_id}/mixture.flac
+      preds: experiments/exp003.0_260809_bsroformer_pilot/eval_renders/test_sumstem/{song_id}
+      scores: experiments/exp003.0_260809_bsroformer_pilot/eval/eval_exp003.0_ep59_test_sumstem.parquet
+    master:
+      label: publisher master
+      input: data/gugak_ensemble_71955/ingest/{song_id}/{song_id}_master.wav
+      preds: experiments/exp003.0_260809_bsroformer_pilot/eval_renders/test_master/{song_id}
+      # lag-ALIGNED rows (the paper's protocol: masters re-aligned to their stems before scoring)
+      scores: experiments/exp003.0_260809_bsroformer_pilot/eval/eval_exp003.0_ep59_test_master_aligned.parquet
+
+# --- real-world inputs: demo set v2 renders ------------------------------------------------
+real_world:
+  demo_set_config: configs/demo_set_v2.yaml                    # item id → frozen pick (folder name)
+  renders: data/gugak_demo_set/v2/renders/exp003.0_ep59        # <pick>/{mixture,pred_<class>}.flac
+  label: recording
+
+# --- excerpt window (test songs; real-world clips are already 30 s) -------------------------
+window:
+  default_length_s: 30.0
+  # default start = v1 median-audible-class rule (scripts/build_demo_set_candidates.py):
+  # 30 s windows of 3 s chunks whose mean audible-class count sits closest to the song's own
+  # median; head/tail margins respected; among ties the window nearest ⅓ of the song.
+  chunk_len_s: 3.0
+  coverage_threshold: 0.25           # a class is audible in a chunk above this coverage
+  edge_margin_s: 30.0
+  anchor_fraction: 0.3333
+
+# --- which predicted stems are written ---------------------------------------------------
+audible:
+  rms_threshold_dbfs: -50.0          # predicted-stem RMS over the window must exceed this
+                                     # (tolerance test, never equality — silence is not zero)
+
+# --- encoding, as the 2026-08-18 real-world render (libsndfile MP3 via soundfile) ----------
+audio:
+  format: MP3
+  compression_level: 0.4             # libsndfile quality knob, 0 = best/biggest … 1 = smallest
+  extension: mp3
+
+peaks:
+  points: 1000                       # min/max pairs per file (header preview waveform)
+  stems: false                       # trackswitch draws stem waveforms itself → input peaks only
+
+# --- the nine stem classes, in page order; labels per the paper ----------------------------
+classes:
+  - {key: 가야금, slug: gayageum,   en: Gayageum}
+  - {key: 거문고, slug: geomungo,   en: Geomungo}
+  - {key: 기타,   slug: other,      en: other}
+  - {key: 대금,   slug: daegeum,    en: Daegeum}
+  - {key: 아쟁,   slug: ajaeng,     en: Ajaeng}
+  - {key: 양금,   slug: yanggeum,   en: Yanggeum}
+  - {key: 타악기, slug: percussion, en: percussion}
+  - {key: 피리,   slug: piri,       en: Piri}
+  - {key: 해금,   slug: haegeum,    en: Haegeum}
+
+genres:                              # genreSub → English, per the paper
+  판소리: Pansori
+  산조: Sanjo
+  창작국악: contemporary Gugak
+  풍류음악: Pungnyu
+  민요: Minyo
+  궁중음악: court music
+  대풍류: Daepungnyu
+
+# --- publishing (scripts/publish_demo_web.sh) ----------------------------------------------
+publish:
+  github_repo: jae-gye/gugak-demo-v2
+  repo_dir: ~/storage/gugak-demo-v2  # local clone of the Pages repo (audio never enters the code repo)
+  pages_url: https://jae-gye.github.io/gugak-demo-v2/
