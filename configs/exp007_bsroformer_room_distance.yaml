@@ -1,0 +1,504 @@
+# exp007_bsroformer_room_distance.yaml — BS-RoFormer on partially coherent mixtures
+# (p = 0.5) captured through a SIMULATED ROOM AT A SAMPLED DISTANCE.
+# One config = one wandb run (exp007_260925_bsroformer_room_distance).
+#
+# WHY THIS RUN EXISTS. 71955 was recorded in ONE studio. Every stem of every song shares
+# the same room, the same close-miking and the same chain, so the corpus carries no
+# INTER-RECORDING acoustic variance — and cross-song incoherent mixing manufactures none,
+# because every song it draws from was captured under identical conditions. MUSDB gets that
+# axis for free: its songs come from many studios and many sessions. We have to synthesize
+# it. The deployment complaint is specifically capture-side: audio that was NOT close-miked,
+# picked up from some distance, in a room. This arm supplies exactly that missing axis and
+# nothing else.
+#
+# ⚠️ THIS IS A COMBINED ARM AND CANNOT ATTRIBUTE ITS RESULT TO ONE COMPONENT. It turns on
+# three things at once — per-stem EQ, a shared capture chain, and the room — because
+# MEASUREMENT says the gap has two halves and one GPU buys one answer. State the limitation
+# plainly rather than pretending otherwise: if this arm wins, it does not say whether the
+# room or the spectral randomisation did it, and the two single-factor follow-ups
+# (room-only, EQ-only) are what settle that.
+#
+# WHY BOTH HALVES. The corpus was measured directly rather than assumed:
+#   * per-class L/R correlation on the ingested store is .96–.99 for seven of the nine
+#     classes (타악기 .986, 대금 .980, 피리 .977, 거문고 .975, 해금 .969, 기타 .963,
+#     아쟁 .960; overall median .968, p5 .548, and 0 of 5,752 files are dual-mono). 가야금
+#     .668 and 양금 .656 are the two wide zithers, almost certainly a spaced pair across
+#     the instrument — that is SOURCE WIDTH, not room. So the stems really are dry, and
+#     convolving a room onto them does not stack two rooms.
+#   * ⚠️ a decay-slope probe on percussion transients returned RT60 ≈ .49 s and a DRR-like
+#     −6.6 dB. THAT READING IS WRONG and is recorded here so nobody repeats it: 징 and
+#     꽹과리 are metal gongs that ring for seconds, so the probe tracked instrument sustain,
+#     not room. The per-song spread (std .124 against a median .42) confirms it was
+#     following content. Do not use those numbers for anything.
+# The consequence: because there is almost no room in the recordings, the corpus's
+# invariant acoustic fingerprint is THE MICROPHONE AND WHERE IT WAS PUT — a spectral
+# colouration — not a reverberant tail. Convolution is multiplicative in frequency, so
+# adding a room puts a new magnitude response on top of that colouration but cannot make
+# it VARY. Only a random spectral transform can. So the spectral half is at least as
+# important as the room half, and the arm carries both:
+#   * eq_stem_prob 0.5 — the per-stem board is the PER-INSTRUMENT half: where the mic was
+#     pointed. A 가야금 taken at the bridge and at the soundhole differ completely with the
+#     room held fixed, and no RIR models that. It is also the better-MEASURED of the two
+#     (Embracing Cacophony: +0.6–1.0 dB in the controlled coherent-mix ablation).
+#   * device_response — the SHARED half: one capsule, one preamp, one placement for the
+#     whole ensemble, with a broadband tilt and 1–3 resonances.
+#   * rir — the room the corpus does not have at all.
+# LimitAug stays IMPLEMENTED AND OFF: it is the report's best-measured technique
+# (Jeon & Lee, ISMIR 2022, recovers 0.22–0.85 dB of the musdb-L/XL loss) but it models
+# loudness-war MASTERING, a post-production axis, and this gap is capture.
+#
+# THE ROOM IS SHARED WITHIN A MIXTURE AND VARIES ACROSS MIXTURES. This is the one design
+# decision worth arguing about, so: a real recording puts every instrument in ONE space
+# behind ONE acoustic path. Handing each stem its own room would add variance in a
+# dimension the corpus is already RIGHT about, and worse, it would hand the separator a
+# "which room is this" grouping cue that is perfectly informative in training and simply
+# absent at test time — the classic way an augmentation makes a model worse. It would also
+# destroy the physical coherence the p = 0.5 cluster sampler exists to create: a cluster is
+# one song at one shared offset, i.e. instruments genuinely playing together, and they were
+# together in one room. So rir.scope = per_mixture and rir.position_scope = shared. Both
+# alternatives are implemented (per_cluster, per_stem) and both are marked in
+# src/data/recording_aug.py with the hazard; neither is this arm.
+#
+# EVIDENCE, honestly graded (survey convention: MEASURED / RECIPE / INFERENCE):
+#   * room simulation for separation is RECIPE-strong — WHAMR! builds its reverberant
+#     speech task from pyroomacoustics shoeboxes, SMS-WSJ and DNS do the same — and
+#     MEASURED for reverberant speech separation (Aralikatti et al. 2021: adding real RIRs
+#     is +34% SI-SDRi without pretraining, +7% with).
+#   * SYNTHETIC rooms are not a compromise. Ko et al., ICASSP 2017, MEASURED simulated
+#     image-method rooms against 325 real RIRs on ASpIRE: real RIR + point noise 34.7% WER
+#     vs synthetic medium + point noise 34.9%, and in their 5,100 h LF-MMI experiment
+#     synthetic + point (27.0%) BEAT real + isotropic (27.8%). Generating the bank also
+#     makes geometry, absorption and distance directly sweepable and sidesteps the licence
+#     audit §3.3 flags (EchoThief unusable, MIT IR Survey unclear, BUT/OpenAIR
+#     attribution-bound) — and it produces responses at 44.1 kHz, where an 8/16 kHz corpus
+#     resampled up would act as a brick-wall low-pass dressed as a room.
+#   * direct nine-stem MUSIC SDR evidence for room augmentation DOES NOT EXIST, and §6.1 is
+#     explicit that no public RIR recipe is calibrated to Korean traditional instruments.
+#     This arm is therefore a measurement, not a replication.
+#   * the distance-coupled microphone response is INFERENCE. §2.3 found no controlled
+#     proximity-effect augmentation anywhere in the checked literature and offers the
+#     low-shelf approximation (80–250 Hz, 0–6 dB) as physics, not as a measured range. The
+#     ranges in recording_aug are deliberately mild for that reason.
+#
+# ⚠️ EXPECT AN IN-DOMAIN COST. Σstem val is DRY — it is rendered from the same close-miked
+# studio stems — so an arm that spends half its training on reverberant input is being
+# selected on a condition it now sees less of. Uhlich et al. 2017 is the precedent: their
+# augmented BLSTM LOST 0.94 dB of vocal SDR on Dev while GAINING 0.60 dB on unseen artists.
+# If Σstem-val SI-SDR lands below exp006's matching epoch, that is the expected shape of
+# this result and NOT a reason to stop — the claim this arm makes is about out-of-domain
+# audio, and it can only be settled by the condition-stratified eval (§6.2.1), not by the
+# dry val curve. Read the val curve for collapse, not for ranking.
+#
+# DERIVED FROM exp006 (configs/exp006_bsroformer_partial_coherent.yaml) by transformation.
+# Seeds stay at 42 throughout, as they have since exp003.0, and the head init is the same
+# exp003.0 seed-42 start_checkpoint.ckpt, so the acoustic condition is the only thing that
+# moved against exp006.
+#
+# WHAT CHANGES, and why each is or is not a confound:
+#
+#   THE EXPERIMENT
+#     gugak_mix.eq_stem_prob                  0.0 -> 0.5  the per-instrument mic-placement
+#                                                         half; the Embracing-Cacophony
+#                                                         board that has been built and
+#                                                         disabled in this repo since exp001
+#     gugak_mix.eq_mixbus_prob                0.0 -> 0.0  STAYS OFF — device_response IS the
+#                                                         mix-bus-grain spectral transform
+#                                                         in this design, and running both
+#                                                         would colour the bus twice
+#     gugak_mix.recording_aug                 —   -> enabled, room + capture chain
+#       rir.prob                                    0.5   half the items keep the native dry
+#                                                         close-mic condition, so the dry
+#                                                         Σstem-val signal is still driven
+#                                                         by data the model sees. §5.1
+#                                                         suggests 0.25–0.35, but that is
+#                                                         calibrated to reverb as ONE OF
+#                                                         FIVE simultaneous augmentations;
+#                                                         here it is the only source of an
+#                                                         axis the corpus lacks entirely,
+#                                                         so it is raised to the midpoint.
+#       device_response.prob                        0.5   independent of the room draw, so
+#                                                         the four capture conditions each
+#                                                         get ~25% of the epoch: dry+studio
+#                                                         mic, dry+other mic, room+studio
+#                                                         mic, room+matched mic.
+#     level_automation, limit_aug and dirty_input STAY OFF.
+#
+#   THE GEOMETRY — ONE GPU, and the ARITHMETIC DOES NOT MOVE
+#     training.gradient_accumulation_steps     4  -> 8
+#     training.num_steps                   10000  -> 20000
+#   exp006 ran on TWO GPUs; this runs on ONE (world_size 1), because one is what is free.
+#   The three quantities every comparison depends on are preserved exactly:
+#       effective batch       = 4 x 8 x 1 rank        = 32      (exp006: 4 x 4 x 2)
+#       items per epoch       = num_steps x batch x world = 80,000  (exp006: 10,000 x 4 x 2)
+#       optimizer steps/epoch = 20,000 / 8            = 2,500   (exp006: 10,000 / 4)
+#   external/msst/utils/dataset.py sizes the trainset at batch x world_size to "maintain
+#   num_steps semantics across the whole world", so at world_size 1 the single rank takes
+#   all 80,000 items as 20,000 loader steps. Eval cadence is unchanged.
+#
+# ⚠️ WALL CLOCK. exp006 measured 131.0 ms/item at batch 4 with torch.compile on this box,
+# and put its own 35-epoch, two-rank cap at roughly 2.5 days. One rank doubles that: about
+# 3.4 h/epoch, so ~5.0 days to the 35-epoch cap, with the first in-run eval ~3.4 h after
+# launch. The epoch cap stays at 35 rather than being cut, because 35 is the epoch exp003.0
+# (10.2543) and exp006 both have on disk — the comparison is worth more than the two days.
+# The checkpoint ladder means the arm can also be read at any earlier epoch against the
+# other arms' same epoch if it has to be stopped.
+#
+# LOADER COST, MEASURED on this box (scripts/bench_recording_aug.py, 200 items, single
+# process for latency then 8 workers for throughput; p50 reproduces to ±1.5 ms across runs):
+#
+#     arm                                      p50      p95     items/s   mixture L/R r
+#     baseline (exp006, feature absent)      24.6ms   31.8ms      169.3       0.815
+#     stem EQ p=.5                           47.3ms   81.3ms      109.0       0.818
+#     device response p=1                    60.2ms   92.9ms       87.1       0.811
+#     room per_mixture p=1                   60.2ms   85.1ms       82.3       0.296
+#     room per_stem p=1 (the ablation)       86.5ms  136.8ms       60.3       0.286
+#     THIS ARM (EQ + room + device, p=.5)    74.4ms  154.4ms       64.5       0.676
+#     everything on (all five stages)       158.5ms  280.7ms       33.9       0.273
+#
+# The trainer needs 4 items per 524 ms step = 7.6 items/s. This arm delivers 64.5 at 8
+# workers — 8.5x headroom, against the ~5x the loader had before — so the GPU never waits.
+# The all-five row is over the ~100 ms/item line §3.5 draws, which is the quantitative form
+# of the report's own "do not enable all five at once".
+# Two things make the room affordable. It is ONE shared kernel spectrum multiplied across
+# the whole (n_stems, channels, time) transform, not nine convolutions — §3.5 measured
+# naive per-stem stereo fftconvolve at 16–20 ms a source, i.e. 145–180 ms per item. And
+# only the DRAWN slots are processed (n averages 5.5 under n ~ U{2..9}). Per-stem scoping
+# would cost +62 ms instead of +36 ms, which is a second and much smaller reason not to use
+# it on top of the decisive one above.
+# The L/R column is the stereo sanity check: only the room moves it (0.815 -> 0.296 at
+# p=1, 0.676 at p=0.5), which is what a two-microphone bank should do and what a mono
+# kernel would not. EQ and the device chain leave it alone, correctly — they are
+# magnitude-only transforms applied identically to both channels.
+#
+# ⚠️ THE COLLAPSE IS THE MEASUREMENT (inherited from exp002.3 onward, unchanged). If heads
+# collapse: no stop, no resume, no hand-set lr, no scheduler edits. Only a genuine fault —
+# non-finite steps, a crash, disk or CUDA error — justifies stopping.
+#
+# Everything else — manifest v2, uniform density from 2, coherent_mix_prob 0.5 with uniform
+# anchors, lr 1e-5, bf16 train / fp32 eval, 8 s segments, L1 with silent targets, Adam with
+# clip 5.0, Σstem-val selection on 91 songs, no solo pool, the eval overlap geometry — is
+# exp006's, unchanged. Loss and metrics remain CLI flags: --use_standard_loss --loss l1_loss
+# --metrics si_sdr --metric_for_scheduler si_sdr (see the launch script).
+
+# --- MSST: audio geometry ---
+audio:
+  chunk_size: 352800        # [exp003.0] 8 s × 44100 — BS-RoFormer's native training
+                            # length. Divides the 441-sample STFT hop exactly (800 hops),
+                            # so no ragged final frame. ALSO the eval chunk: in MSST's
+                            # 'generic' inference mode (everything except htdemucs) the
+                            # eval chunk is read from audio.chunk_size, not from
+                            # training.segment.
+  dim_f: 1024               # inert here — the model reads its own stft_* keys below
+  dim_t: 801                # inert (upstream comment: "don't work (use in model)")
+  hop_length: 441
+  n_fft: 2048
+  num_channels: 2
+  sample_rate: 44100
+  min_mean_abs: 0.0         # unused: our dataset does activity-aware draws itself
+
+# --- MSST: training ---
+training:
+  use_torch_compile: true             # [exp006] 1.91x measured; see exp006's header
+  run_name: exp007_260925_bsroformer_room_distance   # [exp007] run-scoped
+  custom_dataset: "src.data.mix_dataset:create_msst_dataset"   # fork hook → our loader
+  batch_size: 4                       # unchanged from exp006 — 68.5 GiB peak, has headroom
+  gradient_accumulation_steps: 8      # [exp007] was 4 — 4 x 8 x 1 rank = 32
+  grad_clip: 5.0                      # unchanged from exp002 (L2 norm)
+  segment: 8                          # [exp003.0] bookkeeping only under 'generic' demix
+  shift: 1
+  samplerate: 44100
+  channels: 2
+  normalize: false                    # normalization owned by the dataset (−19 LUFS tuple)
+  instruments: [가야금, 거문고, 기타, 대금, 아쟁, 양금, 타악기, 피리, 해금]  # = gugak_mix.classes
+  target_instrument: null
+  num_epochs: 35                      # [exp006] unchanged — the epoch exp003.0/exp006 have
+  num_steps: 20000                    # [exp007] was 10000 — x batch 4 x world 1 = 80,000
+                                      # items per epoch, the same amount of data every arm
+                                      # from exp002 onward has seen per epoch. At accum 8
+                                      # that is 2,500 optimizer steps → eval every 2,500,
+                                      # per spec.
+  optimizer: adam
+  # GUESS, not tuned. Chosen conservatively for the pilot to avoid early divergence.
+  # Not a considered value — do not cite this as a design decision.
+  lr: 1.0e-5
+  patience: 5                         # ReduceLROnPlateau (scheduler, NOT early stop —
+                                      # MSST HAS no early stop; this run is stopped by hand)
+  reduce_factor: 0.5
+  q: 0.95
+  coarse_loss_clip: true
+  ema_momentum: 0                     # OFF — MSST single-GPU path never evals/saves EMA
+                                      # weights (dead overhead), as exp002
+  other_fix: false
+  use_amp: true                       # bf16 from launch. bf16 carries fp32's exponent
+  amp_dtype: bfloat16                 # range in 16 bits, so the fp16 overflow behind
+                                      # exp001's two cliffs is structurally impossible.
+                                      # STFT/iSTFT are fp32-pinned inside the model.
+  inference_amp_dtype: float32        # eval stays pure fp32 — same measuring instrument as
+                                      # every other arm, so val curves stay comparable
+
+# --- MSST: stock augmentations OFF — all augs live in gugak_mix ---
+augmentations:
+  enable: false
+
+# --- MSST: eval-time chunked inference ---
+inference:
+  num_overlap: 2            # step = chunk/2 → 50% overlap. MSST's integer semantics
+                            # cannot express the spec's 25%; 50% is the nearest expressible
+                            # value and strictly better (deviation, quality ≥ spec).
+  batch_size: 4
+
+gugak_mix:
+  # class scheme: publisher's 9, pitched percussion (편종·편경·방향) quarantined —
+  # excluded from training entirely, NOT folded back into 타악기. Order = output slots,
+  # and slot i is mask_estimators[i] in the model. IDENTICAL to exp002.
+  classes: [가야금, 거문고, 기타, 대금, 아쟁, 양금, 타악기, 피리, 해금]
+
+  # manifest v2 — 16 publisher-defective rows removed (0714's three mix-carrying stems +
+  # all of 0885, which is 0886 looped 7×).
+  source_manifest: manifests/parquet/source_manifest_v2.parquet
+
+  # source pool: ensemble only — 71470 solo pool parked (scope decision 2026-08-03).
+  # loudness_match is therefore deliberately ABSENT, as in exp006.
+  datasets: ["71955"]
+  split: train
+
+  # [exp003.0] excerpt geometry: 8 s, BS-RoFormer's native length
+  segment_seconds: 8.0
+  sample_rate: 44100
+
+  # density: n uniform over 2..9. Window-length INDEPENDENT by construction — the uniform
+  # mode reads no manifest at all. The two knobs below are measured-mode inputs, inert
+  # here, kept so switching modes needs no other edit.
+  density_mode: uniform
+  density_chunk_len_s: 8.0
+  density_coverage_threshold: 0.25
+  density_uniform_min: 2              # [exp006] n ~ U{2..9}, as exp004/exp004.1
+
+  # coherent mixing — unchanged from exp006, so coherence is held fixed while the
+  # acoustic condition moves
+  coherent_mix_prob: 0.5
+  anchor_selection: uniform
+  cluster_min_melodic: 2
+  cluster_shared_channel_swap: true
+  cluster_shared_gain: false
+
+  gain_min: 0.25
+  gain_max: 1.25
+  channel_swap_prob: 0.5
+  # [exp007] THE PER-INSTRUMENT SPECTRAL HALF, on for the first time since the board was
+  # written. Low shelf 50–150 Hz + 0–4 peaks + high shelf 6–12 kHz, ±9 dB, Q 0.7–5 — the
+  # Embracing-Cacophony recipe, reimplemented in build_random_eq(). It stands in for "where
+  # was the mic pointed at this instrument", which measurement says is the corpus's actual
+  # invariant and which no RIR can model. Linear, so the sum invariant is untouched.
+  eq_stem_prob: 0.5
+  # OFF: the mix-bus-grain spectral transform in this arm is recording_aug.device_response,
+  # which is distance-coupled and physically parameterised. Running both would apply two
+  # independent random colourations to the same bus.
+  eq_mixbus_prob: 0.0
+
+  # --- [exp007] THE EXPERIMENT: recording-condition augmentation -------------------
+  # → src/data/mix_dataset.py + src/data/recording_aug.py. Every stage not named here is
+  # at its default of 0, which costs neither a line of DSP nor a single RNG draw.
+  recording_aug:
+    enable: true
+    coherence_mode: strict_sum        # mixture ≡ Σ targets, asserted by the test suite.
+                                      # The two sum-breaking modes (dereverberation,
+                                      # clean_under_degraded_input) are unreachable from
+                                      # here: setting a dry target or any dirty-input
+                                      # probability under strict_sum raises at construction.
+    silence_eps: 1.0e-6               # CLAUDE.md's floor — the post-ingest DC-removal
+                                      # residue is 1.192e-07, so this clears it by 8x
+    assert_invariant: false           # a debug aid; the invariant is a test, not a per-item
+                                      # reduction in a 5-day run
+
+    rir:
+      prob: 0.5                       # see the header for why this is not §5.1's 0.25–0.35
+      scope: per_mixture              # ONE room per mixture, shared by every stem. The
+                                      # alternatives exist and are NOT this arm:
+                                      #   per_cluster — clusters share, incoherent stems
+                                      #     may differ. Defensible (incoherent mixing
+                                      #     already combines sources that never co-occurred)
+                                      #     but still a room cue for half the mix.
+                                      #   per_stem    — ⚠️ a train-only separation cue that
+                                      #     no real recording contains. Ablation only.
+      position_scope: shared          # one source position too, so the item convolves with
+                                      # exactly ONE kernel. Per-position variation inside a
+                                      # shared room is physically real (an ensemble spreads
+                                      # in depth) but it is a REFINEMENT — a later arm, not
+                                      # this one.
+      target_mode: source_image       # y_i = h * s_i, x = Σ y_i. Report §4.2 option 1.
+                                      # dry_source is separation PLUS dereverberation and
+                                      # needs coherence_mode: dereverberation to even parse.
+      manifest: manifests/parquet/rir_pool_v1.parquet
+      audio_root: /home/jae.gye/storage/gugak-rir/v1   # data, deliberately outside the repo
+      # 48 shoebox rooms x 9 source positions, 420 responses, 44.1 kHz STEREO, built by
+      # scripts/build_rir_pool.py (seed 42, pyroomacoustics MIT). Measured coverage:
+      # T30 0.16–1.37 s · DRR −10.6 to +15.6 dB · distance 0.4–5.8 m, rooms per RT60 band
+      # 13/14/15. The bank stores DRR per response because DRR — not RT60 — is what
+      # "picked up from a distance instead of close-miked" actually changes, and the draw
+      # stratifies over BOTH.
+      # STEREO IS LOAD-BEARING: each entry is a pair of responses from TWO microphone
+      # positions in one room (spacing 0.06–0.45 m, i.e. phone through handheld through
+      # spaced main pair), and the loader convolves L with h_L and R with h_R. One mono
+      # response used twice would leave the mixture's L/R correlation where it is and give
+      # a "mono room". MEASURED effect on the mixture: median L/R correlation 0.844 dry ->
+      # 0.295 with the room (p5 0.05, p95 0.64), i.e. it lands in distant-capture territory
+      # instead of staying near-coincident. h_L/h_R are shared by every stem, so this costs
+      # no per-stem cue and the sum stays exact.
+      rt60_bands_s: [[0.15, 0.35], [0.35, 0.65], [0.65, 1.00]]
+      distance_bands_m: [[0.4, 1.2], [1.2, 3.0], [3.0, 6.0]]
+      max_tail_seconds: 1.0           # the bank holds nothing longer; the loader asserts it
+      fft_cache_size: 8               # worker-local LRU over kernel spectra, ~3.1 MB each
+
+    device_response:
+      prob: 0.5
+      couple_to_distance: true        # a close capsule gets the proximity low-shelf lift;
+                                      # at distance that vanishes and HF air absorption
+                                      # takes over. Drawing the two independently would put
+                                      # a +6 dB proximity boost on a source 6 m away.
+      # INFERENCE, not measured — §2.3 has no controlled proximity-effect augmentation
+      # anywhere in the checked literature. Deliberately mild: §5.1 asks for "broad
+      # ±3 dB/octave, not a 20 dB telephone filter".
+      proximity_shelf_hz: [80.0, 250.0]
+      proximity_max_db: 6.0
+      air_shelf_hz: [6000.0, 14000.0]
+      air_max_db: 6.0
+      capsule_peaks: [1, 3]           # 1–3 resonances: one peak cannot represent both a
+                                      # presence lift and a mid scoop, and the whole point
+                                      # of this stage is that the MICROPHONE is the
+                                      # corpus's real invariant, so it needs real range
+      capsule_hz: [300.0, 12000.0]
+      capsule_max_db: 5.0
+      tilt_max_db: 5.0                # dark vs bright — the coarsest axis along which two
+                                      # microphones differ, as a matched shelf pair
+      highpass_hz: [20.0, 120.0]
+      max_gain_db: 9.0                # hard ceiling on any single section
+
+    # level_automation, limit_aug and dirty_input are absent = every probability 0. They
+    # are implemented and tested; they are simply not this experiment.
+
+  # mixture normalization: loudnorm mixture+targets by one shared gain to the
+  # dataset-native loudness, then peak-guard. Unchanged — the room stage is upstream of it,
+  # so a reverberant item and a dry item still arrive at the model at the same level and
+  # loudness cannot become a proxy for "was this one augmented".
+  target_lufs: -19.0
+  peak_ceiling: 0.99
+
+  seed: 42                            # mix draw stream. Same as exp001/exp002/exp006.
+
+  # --- reserved knobs (designed, not implemented — enabling raises) ---
+  multi_sample: {}
+  pitch_pool_manifest: null
+  draw_unit: file
+
+# Σstem eval variant (val), rendered by src/data/build_sumstem_eval.py in the MSST-native
+# layout (<song>/mixture.flac + <song>/<class>.flac). Classes come from gugak_mix.classes
+# above — train and eval cannot drift. The existing 91-song render is reused unchanged.
+# NOTE it is DRY: see the in-domain-cost warning in the header.
+sumstem_eval:
+  out_root: data/gugak_ensemble_71955/sumstem_9stem
+  extension: flac
+  subtype: PCM_24
+
+# --- MSST: BS-RoFormer architecture — copied VERBATIM from the config shipped alongside
+# the pretrained checkpoint (config_bs_roformer_384_8_2_485100.yaml, MSST release v1.0.12)
+# with ONE change: num_stems 4 -> 9. Every other value must match the checkpoint's
+# hyperparameters or the trunk weights won't transfer.
+#
+# Note on where the parameters live: the 62 per-band mask estimators are ~24.6M params
+# EACH, so going 4 -> 9 stems takes the model from 132M to 254M parameters. The shared
+# trunk (band split + 8 transformer layers + final norm) is only 33.2M of that.
+model:
+  dim: 384
+  depth: 8
+  stereo: true
+  num_stems: 9        # [exp003.0] 4 MUSDB sources -> our 9 gugak classes
+  time_transformer_depth: 1
+  freq_transformer_depth: 1
+  linear_transformer_depth: 0
+  freqs_per_bands: !!python/tuple
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 4
+    - 4
+    - 4
+    - 4
+    - 4
+    - 4
+    - 4
+    - 4
+    - 4
+    - 4
+    - 4
+    - 4
+    - 12
+    - 12
+    - 12
+    - 12
+    - 12
+    - 12
+    - 12
+    - 12
+    - 24
+    - 24
+    - 24
+    - 24
+    - 24
+    - 24
+    - 24
+    - 24
+    - 48
+    - 48
+    - 48
+    - 48
+    - 48
+    - 48
+    - 48
+    - 48
+    - 128
+    - 129
+  dim_head: 64
+  heads: 8
+  attn_dropout: 0.1
+  ff_dropout: 0.1
+  flash_attn: true
+  dim_freqs_in: 1025
+  stft_n_fft: 2048
+  stft_hop_length: 441
+  stft_win_length: 2048
+  stft_normalized: false
+  mask_estimator_depth: 2
+  multi_stft_resolution_loss_weight: 1.0
+  multi_stft_resolutions_window_sizes: !!python/tuple
+  - 4096
+  - 2048
+  - 1024
+  - 512
+  - 256
+  multi_stft_hop_size: 147
+  multi_stft_normalized: False
+  mlp_expansion_factor: 2
+  use_torch_checkpoint: False # it allows to greatly reduce GPU memory consumption during training (not fully tested)
+  skip_connection: False # Enable skip connection between transformer blocks - can solve problem with gradients and probably faster training
