@@ -1,0 +1,333 @@
+# exp006_bsroformer_partial_coherent.yaml — BS-RoFormer trained on PARTIALLY COHERENT
+# mixtures (p = 0.5). One config = one wandb run (exp006_260925_bsroformer_partial_coherent).
+#
+# WHY THIS RUN EXISTS. The project's own ISMIR LBD paper names it, twice, and it is the
+# most recently touched artifact in the tree (paper/ismir2026_lbd/v2.tex, rebuilt
+# 2026-09-23): "A nine-stem BS-RoFormer reaches 10.97 dB under incoherent mixing; training
+# it with the partially coherent sampler is the natural next step." The coherence row was
+# only ever run on HTDemucs (exp004 at p = 1.0, exp004.1 at p = 0.0), and the model that
+# actually wins — BS-RoFormer — has only ever seen incoherent mixes (exp003.x, all p = 0).
+# This fills that cell, at the midpoint of the dose axis exp004/exp004.1 bracket.
+#
+# ⚠️ NAMING. exp005 is reserved on the Notion legal pad for per-source loss normalisation
+# (see exp004's header), so this takes exp006 rather than squatting on it. Notion is the
+# authority on the plan and was not reachable when this was written — if exp006 is already
+# taken, rename before launch; nothing else in this file depends on the number.
+#
+# DERIVED FROM exp003.0 (configs/exp003.0_bsroformer_pilot.yaml) by transformation, not by
+# retyping — exp003.0 is the only BS-RoFormer arm that ran to its cap AND was fully
+# evaluated (ep59, Σstem-val SI-SDR 10.7013). ALL THREE SEED SURFACES STAY AT 42, its own,
+# and the launcher reuses exp003.0's seed-42 start_checkpoint.ckpt, so the head init is
+# byte-identical and coherence is the only thing that moved on the model side.
+#
+# WHAT CHANGES, and why each is or is not a confound:
+#
+#   THE EXPERIMENT
+#     gugak_mix.coherent_mix_prob             0.0 -> 0.5    partial coherence
+#     gugak_mix.density_uniform_min           1   -> 2      n ~ U{2..9}. The anchor-cluster
+#                                                           sampler needs n >= 2 to form a
+#                                                           cluster at all, and exp004 and
+#                                                           exp004.1 both ran with this
+#                                                           floor — so the coherence row
+#                                                           stays internally comparable.
+#     gugak_mix.anchor_selection              —   -> uniform          (exp004's setting)
+#     gugak_mix.cluster_min_melodic           —   -> 2                (exp004's setting)
+#     gugak_mix.cluster_shared_channel_swap   —   -> true   (its default, written out)
+#     gugak_mix.cluster_shared_gain           —   -> false  (its default, deferred)
+#
+#   THE SPEED WORK — the geometry moves, the ARITHMETIC DOES NOT
+#     training.batch_size                     2     -> 4
+#     training.gradient_accumulation_steps     16    -> 4
+#     training.num_steps                      40000 -> 10000
+#     training.use_torch_compile              —     -> true
+#   This arm runs on TWO GPUs (world_size 2). Those numbers are chosen together so that
+#   every quantity exp003.x's results depend on is preserved exactly:
+#       effective batch       = 4 x 4 x 2 ranks           = 32      (exp003.x: 2 x 16 x 1)
+#       items per epoch       = num_steps x batch x world = 80,000  (exp003.x: 40,000 x 2)
+#       optimizer steps/epoch = 10,000 / 4                = 2,500   (exp003.x: 40,000 / 16)
+#   external/msst/utils/dataset.py builds the trainset at batch x world_size precisely to
+#   "maintain num_steps semantics across the whole world"; DistributedSampler(drop_last)
+#   then hands each rank 40,000 items = 10,000 loader steps. Eval cadence is unchanged.
+#
+# ⚠️ NOT BIT-COMPARABLE TO exp003.x. torch.compile fuses, and fusion reorders reductions,
+# so this run's arithmetic differs from exp003.0's in the last bits even where the maths is
+# identical. MEASURED on this box (RTX PRO 6000 Blackwell sm_120, torch 2.11.0+cu128,
+# scripts/bench_compile.py): 0.5826 -> 0.3049 s/step at batch 2 (1.91x), and 131.0 vs
+# 291.3 ms/item at batch 4 (2.22x per item) at 68.5 GiB peak. With two ranks that takes the
+# arm from ~17.4 days to roughly 2.5 days at the 35-epoch cap. The trade is deliberate: the
+# comparison against exp003.0 is statistical — same protocol, same data, same seeds — not
+# bitwise, and it is written down here so nobody later reads a 0.0x dB wobble as a finding.
+#
+# EPOCH CAP 35, NOT 60, with an explicit continuation. exp003.0's own checkpoint ladder puts
+# ep35 at 10.2543 against its ep59 best of 10.7013 — 95.8% of the final number for 58% of
+# the wall clock, with the plateau reducer never having fired in between. 35 epochs answers
+# "does partial coherence beat incoherent" against exp003.0's MATCHING epoch, a number
+# already on disk. If it wins, the arm continues to 60 from last_bs_roformer.ckpt through
+# the launcher's resume path — which is why checkpoint retention MUST keep `last`.
+#
+# ⚠️ THE COLLAPSE IS THE MEASUREMENT (inherited from exp002.3 onward, unchanged). If heads
+# collapse: no stop, no resume, no hand-set lr, no scheduler edits. Only a genuine fault —
+# non-finite steps, a crash, disk or CUDA error — justifies stopping. Quality going down is
+# not a fault.
+#
+# Everything else — manifest v2, uniform density, lr 1e-5, bf16 train / fp32 eval, 8 s
+# segments, L1 with silent targets, Adam with clip 5.0, Σstem-val selection on 91 songs, no
+# solo pool, EQ off, the eval overlap geometry — is exp003.0's, unchanged. Loss and metrics
+# remain CLI flags: --use_standard_loss --loss l1_loss --metrics si_sdr
+# --metric_for_scheduler si_sdr (see the launch script).
+
+# --- MSST: audio geometry ---
+audio:
+  chunk_size: 352800        # [exp003.0] 8 s × 44100 — BS-RoFormer's native training
+                            # length. Divides the 441-sample STFT hop exactly (800 hops),
+                            # so no ragged final frame. ALSO the eval chunk: in MSST's
+                            # 'generic' inference mode (everything except htdemucs) the
+                            # eval chunk is read from audio.chunk_size, not from
+                            # training.segment.
+  dim_f: 1024               # inert here — the model reads its own stft_* keys below
+  dim_t: 801                # inert (upstream comment: "don't work (use in model)")
+  hop_length: 441
+  n_fft: 2048
+  num_channels: 2
+  sample_rate: 44100
+  min_mean_abs: 0.0         # unused: our dataset does activity-aware draws itself
+
+# --- MSST: training ---
+training:
+  use_torch_compile: true             # [exp006] 1.91x measured; see header and the fork patch
+  run_name: exp006_260925_bsroformer_partial_coherent# [exp006] run-scoped
+  custom_dataset: "src.data.mix_dataset:create_msst_dataset"   # fork hook → our loader
+  batch_size: 4                       # [exp006] was 2 — see header; effective batch stays 32
+  gradient_accumulation_steps: 4      # [exp006] was 16 — 4 x 4 x 2 ranks = 32
+                                    # 78.8 GiB and still creeping upward with step count
+                                    # · batch 8 -> OOM. Effective batch is held at 2×16 =
+                                    # 32, matching exp002, because that is what makes any
+                                    # later comparison mean anything — so the physical
+                                    # batch is the only free variable and 2 is the one
+                                    # with real headroom. (3 would fit but cannot reach
+                                    # 32 with an integer accumulation count.)
+  grad_clip: 5.0                    # unchanged from exp002 (L2 norm)
+  segment: 8                        # [exp003.0] bookkeeping only under 'generic' demix
+  shift: 1
+  samplerate: 44100
+  channels: 2
+  normalize: false                  # normalization owned by the dataset (−19 LUFS tuple)
+  instruments: [가야금, 거문고, 기타, 대금, 아쟁, 양금, 타악기, 피리, 해금]  # = gugak_mix.classes
+  target_instrument: null
+  num_epochs: 35                      # [exp006] was 60 — see header; resume to 60 if it wins
+  num_steps: 10000                    # [exp006] was 40000 — x batch 4 x world 2 = 80,000 items
+                                    # steps at accum 16 → eval every 2,500 steps, per
+                                    # spec. Note this also means 40,000 × 2 = 80,000
+                                    # training excerpts per epoch — the same number of
+                                    # items exp002 saw per epoch (10,000 × 8), so "epoch"
+                                    # means the same amount of data on both arms.
+                                    # Measured cost: ~2.3 loader steps/s → ~4.8 h/epoch,
+                                    # so the first in-run eval is ~5 h after launch.
+  optimizer: adam
+  # GUESS, not tuned. Chosen conservatively for the pilot to avoid early divergence.
+  # Not a considered value — do not cite this as a design decision.
+  lr: 1.0e-5
+  patience: 5                       # ReduceLROnPlateau (scheduler, NOT early stop —
+                                    # MSST HAS no early stop; this run is stopped by hand)
+  reduce_factor: 0.5
+  q: 0.95
+  coarse_loss_clip: true
+  ema_momentum: 0                   # OFF — MSST single-GPU path never evals/saves EMA
+                                    # weights (dead overhead), as exp002
+  other_fix: false
+  use_amp: true                     # bf16 from launch. bf16 carries fp32's exponent
+  amp_dtype: bfloat16               # range in 16 bits, so the fp16 overflow behind
+                                    # exp001's two cliffs is structurally impossible.
+                                    # GradScaler auto-disables under bf16 (verify the
+                                    # AMP: line prints grad_scaler_enabled=False).
+                                    # STFT/iSTFT are fp32-pinned inside the model —
+                                    # for BS-RoFormer that pinning is a NEW fork patch
+                                    # (models/bs_roformer/bs_roformer.py); the existing
+                                    # one only covered HTDemucs.
+  inference_amp_dtype: float32      # eval stays pure fp32 — same measuring instrument as
+                                    # every other arm, so val curves stay comparable
+
+# --- MSST: stock augmentations OFF — all augs live in gugak_mix ---
+augmentations:
+  enable: false
+
+# --- MSST: eval-time chunked inference ---
+inference:
+  num_overlap: 2            # step = chunk/2 → 50% overlap. MSST's integer semantics
+                            # cannot express the spec's 25%; 50% is the nearest expressible
+                            # value and strictly better (deviation, quality ≥ spec — the
+                            # same call exp002 made). MSST's generic path cross-fades the
+                            # overlaps with a linear ramp over chunk/10.
+  batch_size: 4
+
+gugak_mix:
+  # class scheme: publisher's 9, pitched percussion (편종·편경·방향) quarantined —
+  # excluded from training entirely, NOT folded back into 타악기. Order = output slots,
+  # and slot i is mask_estimators[i] in the model. IDENTICAL to exp002.
+  classes: [가야금, 거문고, 기타, 대금, 아쟁, 양금, 타악기, 피리, 해금]
+
+  # manifest v2 — 16 publisher-defective rows removed (0714's three mix-carrying stems +
+  # all of 0885, which is 0886 looped 7×).
+  source_manifest: manifests/parquet/source_manifest_v2.parquet
+
+  # source pool: ensemble only — 71470 solo pool parked (scope decision 2026-08-03).
+  # loudness_match is therefore deliberately ABSENT, as in exp002: it re-levels solo-pool
+  # stems onto the ensemble distribution and there is no solo pool in this run. That is
+  # also why the 8 s chunk-loudness reference did not need regenerating.
+  datasets: ["71955"]
+  split: train
+
+  # [exp003.0] excerpt geometry: 8 s, BS-RoFormer's native length
+  segment_seconds: 8.0
+  sample_rate: 44100
+
+  # density: n uniform over 1..9. Window-length INDEPENDENT by construction — the uniform
+  # mode reads no manifest at all — so moving 10 s → 8 s needs no chunk_activities
+  # regeneration. The two knobs below are measured-mode inputs, inert here, kept so
+  # switching modes needs no other edit.
+  density_mode: uniform
+  density_chunk_len_s: 8.0
+  density_coverage_threshold: 0.25
+
+  # live augmentations, unchanged from exp002. EQ stays OFF.
+  gain_min: 0.25
+  gain_max: 1.25
+  channel_swap_prob: 0.5
+  eq_stem_prob: 0.0
+  eq_mixbus_prob: 0.0
+
+  # mixture normalization: loudnorm mixture+targets by one shared gain to the
+  # dataset-native loudness, then peak-guard
+  target_lufs: -19.0
+  peak_ceiling: 0.99
+
+  seed: 42                      # mix draw stream. Same as exp001/exp002.
+
+  # --- reserved knobs (designed, not implemented — enabling raises) ---
+  coherent_mix_prob: 0.5              # [exp006] THE EXPERIMENT — was 0.0
+  multi_sample: {}
+  pitch_pool_manifest: null
+  draw_unit: file
+
+# Σstem eval variant (val), rendered by src/data/build_sumstem_eval.py in the MSST-native
+# layout (<song>/mixture.flac + <song>/<class>.flac). Classes come from gugak_mix.classes
+# above — train and eval cannot drift. The existing 91-song render is reused unchanged:
+# it is stored at full length and chunked at eval time, so the 10 s → 8 s change does not
+# touch it.
+  density_uniform_min: 2              # [exp006] n ~ U{2..9}, as exp004/exp004.1
+  anchor_selection: uniform           # [exp006] as exp004
+  cluster_min_melodic: 2              # [exp006] >= 2 non-percussion per cluster, as exp004
+  cluster_shared_channel_swap: true   # [exp006] its default, written explicitly
+  cluster_shared_gain: false          # [exp006] its default, deferred decision
+
+sumstem_eval:
+  out_root: data/gugak_ensemble_71955/sumstem_9stem
+  extension: flac
+  subtype: PCM_24
+
+# --- MSST: BS-RoFormer architecture — copied VERBATIM from the config shipped alongside
+# the pretrained checkpoint (config_bs_roformer_384_8_2_485100.yaml, MSST release v1.0.12)
+# with ONE change: num_stems 4 -> 9. Every other value must match the checkpoint's
+# hyperparameters or the trunk weights won't transfer. Identical to the repo's
+# configs/config_musdb18_bs_roformer_384_8_2_485100_sage.yaml apart from that file's added
+# sage_attention key, which we do NOT enable.
+#
+# Note on where the parameters live: the 62 per-band mask estimators are ~24.6M params
+# EACH, so going 4 -> 9 stems takes the model from 132M to 254M parameters. The shared
+# trunk (band split + 8 transformer layers + final norm) is only 33.2M of that. This is
+# the structural fact behind the whole experiment: in BS-RoFormer most of the capacity IS
+# per-source, which is exactly what HTDemucs's shared decoder does not have.
+model:
+  dim: 384
+  depth: 8
+  stereo: true
+  num_stems: 9        # [exp003.0] 4 MUSDB sources -> our 9 gugak classes
+  time_transformer_depth: 1
+  freq_transformer_depth: 1
+  linear_transformer_depth: 0
+  freqs_per_bands: !!python/tuple
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 2
+    - 4
+    - 4
+    - 4
+    - 4
+    - 4
+    - 4
+    - 4
+    - 4
+    - 4
+    - 4
+    - 4
+    - 4
+    - 12
+    - 12
+    - 12
+    - 12
+    - 12
+    - 12
+    - 12
+    - 12
+    - 24
+    - 24
+    - 24
+    - 24
+    - 24
+    - 24
+    - 24
+    - 24
+    - 48
+    - 48
+    - 48
+    - 48
+    - 48
+    - 48
+    - 48
+    - 48
+    - 128
+    - 129
+  dim_head: 64
+  heads: 8
+  attn_dropout: 0.1
+  ff_dropout: 0.1
+  flash_attn: true
+  dim_freqs_in: 1025
+  stft_n_fft: 2048
+  stft_hop_length: 441
+  stft_win_length: 2048
+  stft_normalized: false
+  mask_estimator_depth: 2
+  multi_stft_resolution_loss_weight: 1.0
+  multi_stft_resolutions_window_sizes: !!python/tuple
+  - 4096
+  - 2048
+  - 1024
+  - 512
+  - 256
+  multi_stft_hop_size: 147
+  multi_stft_normalized: False
+  mlp_expansion_factor: 2
+  use_torch_checkpoint: False # it allows to greatly reduce GPU memory consumption during training (not fully tested)
+  skip_connection: False # Enable skip connection between transformer blocks - can solve problem with gradients and probably faster training
