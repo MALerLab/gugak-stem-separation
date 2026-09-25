@@ -696,15 +696,42 @@ class RirPool:
         # resolved once at init so the per-item draw is two array lookups
         room_rt60 = {room: float(self.table.loc[rows, "rt60_s"].mean())
                      for room, rows in rows_by_room.items()}
+
+        # The TOP band absorbs everything above it. With a strict `< high` on the last band
+        # too, any room or position beyond the configured ceiling is silently undrawable, and
+        # nothing warns: the guard below only fires when EVERY band is empty. Measured on
+        # rir_pool_v1 with rt60_bands_s=[[.15,.35],[.35,.65],[.65,1.00]] — 6 of 48 rooms
+        # (54 of 420 responses, 12.9%) sat above the 1.00 s ceiling, capping the reachable
+        # T30 at 1.03 s while the bank reaches 1.37 s. Reverberation range is this arm's
+        # headline axis, so losing its top third to a half-open interval is not acceptable.
+        rt60_bands = [list(b) for b in cfg.rt60_bands_s]
+        if rt60_bands:
+            rt60_bands[-1][1] = float("inf")
+        distance_bands = [list(b) for b in cfg.distance_bands_m]
+        if distance_bands:
+            distance_bands[-1][1] = float("inf")
+
         self.rooms_by_rt60_band = [
             [room for room in self._rooms if low <= room_rt60[room] < high]
-            for low, high in cfg.rt60_bands_s]
+            for low, high in rt60_bands]
         self.rows_by_room_distance: dict = {}
         for room, rows in rows_by_room.items():
             distances = self.table.loc[rows, "distance_m"].to_numpy()
             self.rows_by_room_distance[room] = [
                 rows[(distances >= low) & (distances < high)]
-                for low, high in cfg.distance_bands_m]
+                for low, high in distance_bands]
+
+        # every response in the bank must now be reachable; if one is not, the bands have a
+        # GAP rather than a ceiling, which is a config error worth failing on
+        binned_rooms = sum(len(r) for r in self.rooms_by_rt60_band)
+        if binned_rooms != len(self._rooms):
+            missing = sorted(set(self._rooms) - {r for band in self.rooms_by_rt60_band
+                                                 for r in band})
+            raise ValueError(
+                f"{len(missing)} room(s) in {manifest_path} fall in a GAP between "
+                f"rt60_bands_s={cfg.rt60_bands_s}: {missing[:6]}"
+                f"{'...' if len(missing) > 6 else ''} (their mean RT60s are "
+                f"{[round(room_rt60[m], 3) for m in missing[:6]]})")
         usable = [band_index for band_index, rooms in
                   enumerate(self.rooms_by_rt60_band) if rooms]
         if not usable:

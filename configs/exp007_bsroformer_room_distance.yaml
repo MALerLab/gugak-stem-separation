@@ -326,15 +326,35 @@ gugak_mix:
                                       # shared room is physically real (an ensemble spreads
                                       # in depth) but it is a REFINEMENT — a later arm, not
                                       # this one.
+                                      # ⚠️ HOW TO READ A NULL RESULT. Two consequences of
+                                      # this line and `prob: 0.5` above bound what this arm
+                                      # can show. (1) All nine sources sit at ONE point, so
+                                      # the per-source DRR spread that a real ensemble has
+                                      # — and that this file elsewhere calls physically
+                                      # real — is never trained. (2) With prob 0.5 only half
+                                      # the mixtures see a room at all, and only part of
+                                      # those are reverb-dominant, so well under half the
+                                      # epoch is distant-capture-like. If the condition-
+                                      # stratified eval comes back null, it means "this
+                                      # dose, at one position, did not move it" — NOT
+                                      # "room augmentation does not help".
       target_mode: source_image       # y_i = h * s_i, x = Σ y_i. Report §4.2 option 1.
                                       # dry_source is separation PLUS dereverberation and
                                       # needs coherence_mode: dereverberation to even parse.
       manifest: manifests/parquet/rir_pool_v1.parquet
       audio_root: /home/jae.gye/storage/gugak-rir/v1   # data, deliberately outside the repo
       # 48 shoebox rooms x 9 source positions, 420 responses, 44.1 kHz STEREO, built by
-      # scripts/build_rir_pool.py (seed 42, pyroomacoustics MIT). Measured coverage:
-      # T30 0.16–1.37 s · DRR −10.6 to +15.6 dB · distance 0.4–5.8 m, rooms per RT60 band
-      # 13/14/15. The bank stores DRR per response because DRR — not RT60 — is what
+      # scripts/build_rir_pool.py (seed 42, pyroomacoustics MIT). Measured coverage, RE-
+      # MEASURED after the banding fix below: T30 0.157–1.370 s per response (0.164–1.179 s
+      # as a room mean) · DRR −10.6 to +15.6 dB · distance 0.40–5.85 m, rooms per RT60 band
+      # 13/15/20 = all 48, i.e. every one of the 420 responses is reachable.
+      # (Before the fix the top band's strict `< 1.00` orphaned 6 rooms / 54 responses —
+      # 12.9% of the bank, and precisely its most reverberant end — with no warning. The
+      # header used to claim 13/14/15, which sums to 42, not 48.)
+      # Note the responses are stored 1.0 s long, so the six rooms whose T30 exceeds 1.0 s
+      # deliver a TRUNCATED tail. That is uniform across the bank and acceptable here; it
+      # does mean the effective upper reverberation limit is the 1.0 s window, not T30.
+      # The bank stores DRR per response because DRR — not RT60 — is what
       # "picked up from a distance instead of close-miked" actually changes, and the draw
       # stratifies over BOTH.
       # STEREO IS LOAD-BEARING: each entry is a pair of responses from TWO microphone
@@ -345,6 +365,10 @@ gugak_mix:
       # 0.295 with the room (p5 0.05, p95 0.64), i.e. it lands in distant-capture territory
       # instead of staying near-coincident. h_L/h_R are shared by every stem, so this costs
       # no per-stem cue and the sum stays exact.
+      # The LAST band is treated as open-ended by the loader (its upper bound is raised to
+      # +inf at init), so a ceiling below the bank's range no longer silently discards the
+      # tail; a GAP between bands still raises. Stated values are the draw strata, not a
+      # filter: the bands only decide how the uniform room draw is stratified.
       rt60_bands_s: [[0.15, 0.35], [0.35, 0.65], [0.65, 1.00]]
       distance_bands_m: [[0.4, 1.2], [1.2, 3.0], [3.0, 6.0]]
       max_tail_seconds: 1.0           # the bank holds nothing longer; the loader asserts it
