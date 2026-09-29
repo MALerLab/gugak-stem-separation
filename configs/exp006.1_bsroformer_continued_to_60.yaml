@@ -1,81 +1,40 @@
-# exp006_bsroformer_partial_coherent.yaml — BS-RoFormer trained on PARTIALLY COHERENT
-# mixtures (p = 0.5). One config = one wandb run (exp006_260925_bsroformer_partial_coherent).
+# exp006.1_bsroformer_continued_to_60.yaml — exp006 CONTINUED from its 35-epoch cap to 60.
+# One config = one wandb run (exp006.1_260929_continued_to_60).
 #
-# WHY THIS RUN EXISTS. The project's own ISMIR LBD paper names it, twice, and it is the
-# most recently touched artifact in the tree (paper/ismir2026_lbd/v2.tex, rebuilt
-# 2026-09-23): "A nine-stem BS-RoFormer reaches 10.97 dB under incoherent mixing; training
-# it with the partially coherent sampler is the natural next step." The coherence row was
-# only ever run on HTDemucs (exp004 at p = 1.0, exp004.1 at p = 0.0), and the model that
-# actually wins — BS-RoFormer — has only ever seen incoherent mixes (exp003.x, all p = 0).
-# This fills that cell, at the midpoint of the dose axis exp004/exp004.1 bracket.
+# WHY. exp006 stopped at 35 because 35 was the budget, not because it converged. Its ladder
+# rose monotonically through the cap — ep29 11.0852, ep30 11.0863, ep31 11.1369, ep32 11.1749,
+# ep33 11.2111, ep34 11.2352 — and the last five epochs still added +0.15 dB. It had already
+# passed exp003.0's ep59 best (10.7013) by +0.53 dB using 25 fewer epochs, so the ceiling was
+# never found. This run looks for it, and puts exp006 on exp003.0's own 60-epoch protocol so
+# the two are comparable at the cap as well as at ep35.
 #
-# ⚠️ NAMING. exp005 is reserved on the Notion legal pad for per-source loss normalisation
-# (see exp004's header), so this takes exp006 rather than squatting on it. Notion is the
-# authority on the plan and was not reachable when this was written — if exp006 is already
-# taken, rename before launch; nothing else in this file depends on the number.
+# EXACTLY ONE LEAF DIFFERS FROM exp006: training.num_epochs 35 -> 60 (plus run_name).
+# exp006's own config is left untouched at 35 on purpose — it is the provenance of the ep0-34
+# ladder and must keep describing the run that produced it.
 #
-# DERIVED FROM exp003.0 (configs/exp003.0_bsroformer_pilot.yaml) by transformation, not by
-# retyping — exp003.0 is the only BS-RoFormer arm that ran to its cap AND was fully
-# evaluated (ep59, Σstem-val SI-SDR 10.7013). ALL THREE SEED SURFACES STAY AT 42, its own,
-# and the launcher reuses exp003.0's seed-42 start_checkpoint.ckpt, so the head init is
-# byte-identical and coherence is the only thing that moved on the model side.
+# HOW IT IS STARTED. Not fresh. experiments/exp006.1_260929_continued_to_60/continue.sh
+# invokes the RESUME path against exp006's last_bs_roformer.ckpt, with --load_optimizer
+# --load_scheduler --load_epoch --load_best_metric --load_all_metrics --load_all_losses. The
+# checkpoint records epoch 34, and train.py sets start_epoch = epoch + 1, so training picks up
+# at 35; nothing is recomputed and nothing is skipped. Checkpoints keep landing in exp006's
+# results dir so the ladder stays one continuous series.
 #
-# WHAT CHANGES, and why each is or is not a confound:
+# ⚠️ --load_optimizer IS CORRECT HERE and would be a bug on a fresh run. It restores the
+# optimizer and scheduler state, which is what a continuation needs. On a FRESH run the same
+# flag silently reinstates a halved learning rate; this project has been bitten by that twice.
 #
-#   THE EXPERIMENT
-#     gugak_mix.coherent_mix_prob             0.0 -> 0.5    partial coherence
-#     gugak_mix.density_uniform_min           1   -> 2      n ~ U{2..9}. The anchor-cluster
-#                                                           sampler needs n >= 2 to form a
-#                                                           cluster at all, and exp004 and
-#                                                           exp004.1 both ran with this
-#                                                           floor — so the coherence row
-#                                                           stays internally comparable.
-#     gugak_mix.anchor_selection              —   -> uniform          (exp004's setting)
-#     gugak_mix.cluster_min_melodic           —   -> 2                (exp004's setting)
-#     gugak_mix.cluster_shared_channel_swap   —   -> true   (its default, written out)
-#     gugak_mix.cluster_shared_gain           —   -> false  (its default, deferred)
+# ⚠️ THE STALE BEST BAR. MSST writes the PREVIOUS best metric into the file it is currently
+# saving, so last_bs_roformer.ckpt carries best_metric 11.2111 while ep34 actually scored
+# 11.2352. On resume the bar loads one step stale, so the first epoch above 11.2111 is filed
+# as "best" even if it is below 11.2352. Cosmetic: the FILENAME carries each epoch's own
+# score, and that is what the ladder is read from.
 #
-#   THE SPEED WORK — the geometry moves, the ARITHMETIC DOES NOT
-#     training.batch_size                     2     -> 4
-#     training.gradient_accumulation_steps     16    -> 4
-#     training.num_steps                      40000 -> 10000
-#     training.use_torch_compile              —     -> true
-#   This arm runs on TWO GPUs (world_size 2). Those numbers are chosen together so that
-#   every quantity exp003.x's results depend on is preserved exactly:
-#       effective batch       = 4 x 4 x 2 ranks           = 32      (exp003.x: 2 x 16 x 1)
-#       items per epoch       = num_steps x batch x world = 80,000  (exp003.x: 40,000 x 2)
-#       optimizer steps/epoch = 10,000 / 4                = 2,500   (exp003.x: 40,000 / 16)
-#   external/msst/utils/dataset.py builds the trainset at batch x world_size precisely to
-#   "maintain num_steps semantics across the whole world"; DistributedSampler(drop_last)
-#   then hands each rank 40,000 items = 10,000 loader steps. Eval cadence is unchanged.
+# ⚠️ THE COLLAPSE IS THE MEASUREMENT, unchanged. If heads collapse: no stop, no resume, no
+# hand-set lr, no scheduler edits. Only a genuine fault justifies stopping.
 #
-# ⚠️ NOT BIT-COMPARABLE TO exp003.x. torch.compile fuses, and fusion reorders reductions,
-# so this run's arithmetic differs from exp003.0's in the last bits even where the maths is
-# identical. MEASURED on this box (RTX PRO 6000 Blackwell sm_120, torch 2.11.0+cu128,
-# scripts/bench_compile.py): 0.5826 -> 0.3049 s/step at batch 2 (1.91x), and 131.0 vs
-# 291.3 ms/item at batch 4 (2.22x per item) at 68.5 GiB peak. With two ranks that takes the
-# arm from ~17.4 days to roughly 2.5 days at the 35-epoch cap. The trade is deliberate: the
-# comparison against exp003.0 is statistical — same protocol, same data, same seeds — not
-# bitwise, and it is written down here so nobody later reads a 0.0x dB wobble as a finding.
-#
-# EPOCH CAP 35, NOT 60, with an explicit continuation. exp003.0's own checkpoint ladder puts
-# ep35 at 10.2543 against its ep59 best of 10.7013 — 95.8% of the final number for 58% of
-# the wall clock, with the plateau reducer never having fired in between. 35 epochs answers
-# "does partial coherence beat incoherent" against exp003.0's MATCHING epoch, a number
-# already on disk. If it wins, the arm continues to 60 from last_bs_roformer.ckpt through
-# the launcher's resume path — which is why checkpoint retention MUST keep `last`.
-#
-# ⚠️ THE COLLAPSE IS THE MEASUREMENT (inherited from exp002.3 onward, unchanged). If heads
-# collapse: no stop, no resume, no hand-set lr, no scheduler edits. Only a genuine fault —
-# non-finite steps, a crash, disk or CUDA error — justifies stopping. Quality going down is
-# not a fault.
-#
-# Everything else — manifest v2, uniform density, lr 1e-5, bf16 train / fp32 eval, 8 s
-# segments, L1 with silent targets, Adam with clip 5.0, Σstem-val selection on 91 songs, no
-# solo pool, EQ off, the eval overlap geometry — is exp003.0's, unchanged. Loss and metrics
-# remain CLI flags: --use_standard_loss --loss l1_loss --metrics si_sdr
-# --metric_for_scheduler si_sdr (see the launch script).
-
+# Everything else — manifest v2, p = 0.5 partial coherence, lr 1e-5, bf16, torch.compile,
+# batch 4 x accum 4 x 2 ranks = effective 32, 80,000 items and 2,500 optimizer steps per
+# epoch, Sigma-stem val on 91 songs — is exp006's, unchanged.
 # --- MSST: audio geometry ---
 audio:
   chunk_size: 352800        # [exp003.0] 8 s × 44100 — BS-RoFormer's native training
@@ -95,7 +54,7 @@ audio:
 # --- MSST: training ---
 training:
   use_torch_compile: true             # [exp006] 1.91x measured; see header and the fork patch
-  run_name: exp006_260925_bsroformer_partial_coherent   # [exp006] run-scoped
+  run_name: exp006.1_260929_continued_to_60
   custom_dataset: "src.data.mix_dataset:create_msst_dataset"   # fork hook → our loader
   batch_size: 4                       # [exp006] was 2 — see header; effective batch stays 32
   gradient_accumulation_steps: 4      # [exp006] was 16 — 4 x 4 x 2 ranks = 32
@@ -114,7 +73,7 @@ training:
   normalize: false                  # normalization owned by the dataset (−19 LUFS tuple)
   instruments: [가야금, 거문고, 기타, 대금, 아쟁, 양금, 타악기, 피리, 해금]  # = gugak_mix.classes
   target_instrument: null
-  num_epochs: 35                      # [exp006] was 60 — see header; resume to 60 if it wins
+  num_epochs: 60                    # [exp006.1] was 35 — see header
   num_steps: 10000                    # [exp006] was 40000 — x batch 4 x world 2 = 80,000 items
                                     # steps at accum 16 → eval every 2,500 steps, per
                                     # spec. Note this also means 40,000 × 2 = 80,000
