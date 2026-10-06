@@ -28,7 +28,8 @@ canonical mapping `configs/stem_taxonomy.yaml`; counts/tables → Notion)
   except 130 files at 96 kHz (창작국악 → resampled).
 - **71470 (solo phrases, train-only pool):** ~9,945 usable single-instrument clips +
   per-clip MIDI (악보) and annotations. Format-heterogeneous — 15 (sr, bit, ch) combos incl.
-  float wavs, clips ~1–78 s → resampled + unified on ingest.
+  float wavs, clips ~1–78 s → resampled + unified on ingest. What a 10 s training segment
+  costs out of this pool → `docs/solo_pool_duration_analysis.md`.
 - **On disk:** `data/` holds one symlink per set:
   - `data/gugak_ensemble_71955/` → `~/storage/nia-gugak` — `source/<song>/` =
     `<song>_master.wav` + `<song>_<instrument>.wav`; tagging JSONs in `labels/`.
@@ -42,10 +43,16 @@ canonical mapping `configs/stem_taxonomy.yaml`; counts/tables → Notion)
   - `audio_qc*` — QC scans: `audio_qc` = raw sources, `audio_qc_ingest_<set>` = processed
     store (`scripts/audio_qc.py`). `audio_qc.parquet` is the channel-decision table ingest
     consumes.
-  - **`source_manifest` = the one dataloaders read** — ingest ⋈ QC ⋈ taxonomy, one row per
-    ingested source file, keyed by stable `file_id` (`src/data/build_source_manifest.py`).
+  - **`source_manifest_v2` = the one dataloaders read** — ingest ⋈ QC ⋈ taxonomy, one row
+    per ingested source file, keyed by stable `file_id`
+    (`src/data/build_source_manifest.py`; what v2 changed → `docs/manifest_v2_provenance.md`).
+    v2 supersedes v1 for every experiment from exp002 onward. ⚠️ the code default in
+    `src/data/mix_dataset.py` is still v1 — every experiment config names v2 explicitly, and
+    a new config that forgets to will silently train on v1.
     The pitch-shift pool will be a SEPARATE table at (source × semitone) grain,
     foreign-keying here — must not re-copy split/instrument/content columns.
+  - `master_lag` — per-song master↔stem sample offset for the master-input eval
+    (`scripts/master_lag_scan.py`); see the master-lag gotcha below.
   - `activity_index` · `activity_segments` · `activity_summary` · `chunk_activities` —
     stem activity scan outputs (`src/data/activity_scan.py` stage 1 →
     `src/data/build_activity_manifest.py` stage 2); envelope blob gitignored at
@@ -66,7 +73,16 @@ canonical mapping `configs/stem_taxonomy.yaml`; counts/tables → Notion)
 - **Two variants per eval song:** publisher master + Σstem mix. **Early stopping and
   monitoring on the Σstem variant only** — master-val carries an irreducible error floor
   (the mastering residual) that muddies curves/early-stop. Master-val = real-world
-  reference, never model selection. Rationale → Notion.
+  reference, never model selection. Rationale → Notion. (Σstem test tree build →
+  `docs/sumstem_test_build_report.md`.)
+- **Master↔stem lag (verified 2026-09-05, publisher defect).** In 19 of 135 test songs the
+  publisher master is offset from its own stems by a fixed whole number of samples, with no
+  duration difference — 59 samples (1.34 ms) across 대풍류 and 9 판소리, 338 samples (7.7 ms)
+  in 4 판소리, −2138 samples (−48 ms) in 2 창작국악. SI-SDR and uSDR compare sample by
+  sample, so even the 1.34 ms case collapses the score to about −16 dB however good the
+  separation actually is. **Always lag-correct before any master-input eval** — offsets live
+  in `manifests/parquet/master_lag.parquet` (`scripts/master_lag_scan.py`). Σstem is
+  unaffected by construction. Numbers + per-genre effect → `docs/master_eval_lag_report.md`.
 - **Audio QC — raw scanned 2026-07-25, processed store verified 2026-07-27**
   (`scripts/audio_qc.py` → `manifests/parquet/audio_qc*.parquet`; findings → Notion). Ingest
   verification: 16,615/16,615 files at 44.1k/PCM_24, 0 peaks >1.0, 0 dead, 0 anti-phase or
@@ -106,16 +122,16 @@ Post-ingest silence is **not** bit-exact zero. DC removal leaves a ±1-LSB resid
   (e.g. `260719_zeroshot_baseline`). Track metrics (parquet/md); figures gitignored
   (regenerable from tracked metrics + script).
 - **wandb:** cloud target is entity `maler-gye`, project `gugak_stem_separation`, set in
-  `.env` (untracked) — never hardcoded, never by editing the MSST submodule. ⚠️ `WANDB_PROJECT`
-  does NOT override MSST's hardcoded `project='msst'` (explicit `wandb.init()` kwarg beats the
-  env var; `WANDB_ENTITY` does apply) → fix the project at upload: `wandb sync -p
-  gugak_stem_separation <run-dir>` (verified 2026-08-05, exp002 launch). **Every launch script must
-  source it before training:** `set -a; source .env; set +a` — nothing loads `.env`
-  automatically. `--wandb_offline` controls *streaming only*: wandb always writes the local
-  transaction log either way, so an offline run is never a lost run (`wandb sync <dir>`
-  uploads it later). Never log audio or checkpoints as wandb artifacts — free tier = 5 GB of
-  file storage, and metrics don't count against it but artifacts do; `WANDB_IGNORE_GLOBS`
-  in `.env` is the backstop.
+  `.env` (untracked) — never hardcoded, never by editing the MSST submodule.
+  - **Every launch script must source `.env` before training:** `set -a; source .env; set +a`
+    — nothing loads it automatically.
+  - ⚠️ `WANDB_PROJECT` does NOT override MSST's hardcoded `project='msst'` (an explicit
+    `wandb.init()` kwarg beats the env var; `WANDB_ENTITY` does apply) → fix the project at
+    upload: `wandb sync -p gugak_stem_separation <run-dir>` (verified 2026-08-05, exp002).
+  - `--wandb_offline` controls *streaming only* — wandb always writes the local transaction
+    log either way, so an offline run is never a lost run (`wandb sync <dir>` uploads later).
+  - Never log audio or checkpoints as artifacts: free tier = 5 GB of file storage, metrics
+    don't count against it but artifacts do. `WANDB_IGNORE_GLOBS` in `.env` is the backstop.
 - Log git commit hash + full config to wandb for every run.
 - Split frozen in the manifest; never let chunks of one song cross splits (audio leakage).
 - Notebooks (`notebooks/`) = EDA only.
@@ -128,7 +144,8 @@ Post-ingest silence is **not** bit-exact zero. DC removal leaves a ±1-LSB resid
 - Experiment order, stem-class scheme, model roadmap = live decisions → Notion.
 
 ## Evaluation & logging
-Full protocol + wandb design → Notion (Evaluation & Logging). Always-on rules:
+Full protocol + wandb design → Notion (Evaluation & Logging); pipeline build notes →
+`docs/eval_pipeline_build_report.md`. Always-on rules:
 - Training metric: SI-SDR (fast). Reported: museval-style chunked SDR (literature-comparable).
 - Always break results down **per-stem AND per-genre**, never global mean only.
 - Val monitoring/early stopping on the **Σstem variant** (see gotchas).
