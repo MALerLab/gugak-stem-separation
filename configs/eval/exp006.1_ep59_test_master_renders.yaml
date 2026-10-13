@@ -1,0 +1,38 @@
+# eval-job config — exp006.1_ep59, TEST split, MASTER variant, PERSISTING PREDS for demo v3.
+# BS-RoFormer partially coherent (p=0.5, n>=2), 60 epochs. Renders only the four songs in the
+# demo v3 master-split section (demo_web_v3/manifest.yaml, master_gap). NO master_lag_table,
+# as the v2 renders (exp003.0_test_master.yaml): scripts/build_demo_web.py aligns master and
+# stems itself, so lag-shifted preds would be corrected twice. The by-product rows are
+# therefore UNALIGNED master scores — never cite them; the paper's numbers are
+# eval_exp006.1_ep59_test_master_aligned.
+#
+# Run:
+#   uv run python -m src.eval.runner --config configs/eval/exp006.1_ep59_test_master_renders.yaml
+
+run_id: eval_exp006.1_ep59_test_master_renders
+
+checkpoint: experiments/exp006_260925_bsroformer_partial_coherent/checkpoints/model_bs_roformer_ep_59_si_sdr_11.6713.ckpt
+model_config: configs/exp006.1_bsroformer_continued_to_60.yaml
+model_type: bs_roformer
+
+targets:
+  - {split: test, variant: master}
+
+metrics: [si_sdr, usdr]
+usdr_eps: 1.0e-7
+metric_cap_db: 100.0
+silence_config: configs/silence.yaml
+eval_manifest: manifests/parquet/eval_manifest.parquet
+out_dir: experiments/exp006.1_260929_continued_to_60/eval_renders
+seed: 42
+device: cuda:2
+
+render:
+  enabled: true
+  songs:
+    - 0321_민속악_산조
+    - 0831_창작국악_창작국악
+    - 0641_민속악_판소리
+    - 0761_민속악_민요
+  preds_only: true
+  out_dir: experiments/exp006.1_260929_continued_to_60/eval_renders

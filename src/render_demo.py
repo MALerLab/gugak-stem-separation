@@ -8,8 +8,9 @@ predicted stem in a playback-friendly format (MP3 by default; size and compatibi
 for meeting playback).
 
 Config-driven: a render-job YAML (see configs/render/real_world_demo_*.yaml) names the
-checkpoint, model config, input glob and output root. The CLI supplies only what varies
-per invocation: device and threads.
+checkpoint, model config, input glob and output root, plus an optional `clips` list that
+narrows the glob to named clips. The CLI supplies only what varies per invocation: device
+and threads.
 
 Output layout:  <output_root>/<run_label>_ep<N>/<clip>/{mixture,pred_<stem>}.mp3
                 <output_root>/<run_label>_ep<N>/render_manifest.csv   (one row per stem)
@@ -54,6 +55,24 @@ def clip_name(path: Path, strip_suffix: str) -> str:
     """Output folder name for an input clip: its stem minus the configured suffix."""
     name = path.stem
     return name[: -len(strip_suffix)] if strip_suffix and name.endswith(strip_suffix) else name
+
+
+def select_clips(clip_paths: list[Path], wanted: list[str] | None,
+                 strip_suffix: str) -> list[Path]:
+    """Narrow the globbed clips to the job's optional `clips` list (all clips when absent).
+
+    Args:
+        clip_paths: every clip the input glob matched.
+        wanted: clip names (input stem minus `strip_suffix`) to keep; None/empty = keep all.
+        strip_suffix: the job's `clip_name_strip_suffix`.
+    """
+    if not wanted:
+        return clip_paths
+    by_name = {clip_name(path, strip_suffix): path for path in clip_paths}
+    missing = sorted(set(wanted) - set(by_name))
+    if missing:
+        raise FileNotFoundError(f"clips not matched by the input glob: {missing}")
+    return [by_name[name] for name in wanted]
 
 
 def read_clip_as_stereo(path: Path, expected_sample_rate: int) -> tuple[np.ndarray, int]:
@@ -158,6 +177,7 @@ def main(argv: list[str] | None = None) -> None:
     if not clip_paths:
         raise FileNotFoundError(f"no clips match {job['input_glob']}")
     strip_suffix = job.get("clip_name_strip_suffix", "")
+    clip_paths = select_clips(clip_paths, job.get("clips"), strip_suffix)
     commit = git_commit_hash()
 
     all_rows = []

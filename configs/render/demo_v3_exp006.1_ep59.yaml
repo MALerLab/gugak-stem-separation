@@ -1,0 +1,26 @@
+# configs/render/demo_v3_exp006.1_ep59.yaml — render job for src/render_demo.py.
+# Demo v3: the four real-world clips on the demo page (demo_web_v3/manifest.yaml) through the
+# exp006.1 FINAL checkpoint (ep59, val SI-SDR +11.67) — BS-RoFormer with partial coherence,
+# the LBD headline model. Sibling of demo_v2_exp003.0_ep59.yaml; only the checkpoint and the
+# `clips` narrowing differ. FLAC master copies; the page build encodes MP3.
+
+checkpoint: experiments/exp006_260925_bsroformer_partial_coherent/checkpoints/model_bs_roformer_ep_59_si_sdr_11.6713.ckpt
+model_config: configs/exp006.1_bsroformer_continued_to_60.yaml
+model_type: bs_roformer
+run_label: exp006.1                # output folder: <run_label>_ep<N>/
+
+# --- inputs: the frozen v2 final picks at the trained −19 LUFS ---
+input_glob: data/gugak_demo_set/v2/final/normalised/*_normalised.wav
+clip_name_strip_suffix: _normalised
+clips:                             # only the clips the v3 page shows (freeze picks, configs/demo_set_v2.yaml)
+  - yeongsanhoesang_hall_c01_0055-0125
+  - gayageum_sanjo_c02_0350-0420
+  - janghanga_c02_5738-5808
+  - pansori_c01_0105-0135
+
+# --- outputs (storage NVMe via the data/ symlink) ---
+output_root: data/gugak_demo_set/v2/renders
+audio:
+  format: FLAC                     # archival master; mp3 derivable on CPU any time
+  compression_level: 0.5           # libsndfile FLAC effort knob (size only, lossless)
+  write_mixture: true              # re-emit the input for one-folder listening
