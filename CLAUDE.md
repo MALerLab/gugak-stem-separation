@@ -99,6 +99,16 @@ canonical mapping `configs/stem_taxonomy.yaml`; counts/tables → Notion)
   same-base into one source.
 - **Korean filenames need NFC** normalization for any name join. Master naming translation:
   on disk `<song>_master.wav` vs metadata records `<song>.wav`.
+- **Publisher metadata (71955):** `metadata.csv` (was 메타데이터.csv) is the authoritative
+  per-song table, and its `악기구성` column is the per-song instrument list. The label JSONs
+  cover only 297 of 903 songs — never treat them as complete.
+- **CSV encodings differ per file:** `metadata.csv` UTF-8, `genre_split.csv` CP949,
+  `instrument_split.csv` UTF-8. Sniff per file (try utf-8-sig → cp949).
+- **Test audio is withheld by the publisher** (`3.개방데이터` ships only Training/Validation
+  audio), which is why 903 songs have audio out of 1,004 in the metadata.
+- **피리 / 아쟁 labels are subtype-agnostic:** 피리 is a family (향피리, 세피리, 당피리), and
+  "피리2/피리3" may be different subtypes, not just extra players. Unresolvable from the
+  metadata, only by ear.
 
 ### Silence is not zero
 Post-ingest silence is **not** bit-exact zero. DC removal leaves a ±1-LSB residue of
