@@ -1,0 +1,9 @@
+exp007 seed surfaces — all three at 42, shared with exp003.0 and exp006, so that the only
+difference between exp006 and exp007 is the recording-condition augmentation.
+  1. gugak_mix.seed = 42                  the mix draw stream (config)
+  2. --seed 42 on the trainer             torch/numpy global, data order (launch.sh)
+  3. head init                            NOT re-run: byte copy of exp003.0's seed-42
+                                          start_checkpoint.ckpt, sha256 in
+                                          start_checkpoint_sha256.txt
+Augmentation draws come off the same per-item RNG (default_rng([seed, index])), so the
+augmented stream is reproducible from the seed alone.
