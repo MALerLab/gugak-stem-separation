@@ -1,0 +1,30 @@
+# eval-job config — exp008_ep34, TEST split, MASTER variant, master ALIGNED to its stems via
+# the master_lag table (scripts/master_lag_scan.py).
+# BS-RoFormer fully incoherent (p=0.0, n>=2), 35 epochs — LBD v2. Rows only (no renders), as the lag-aligned master configs.
+#
+# Run:
+#   uv run python -m src.eval.runner --config configs/eval/exp008_ep34_test_master_aligned.yaml
+
+run_id: eval_exp008_ep34_test_master_aligned
+
+checkpoint: experiments/exp008_261011_bsroformer_incoherent_n2/checkpoints/model_bs_roformer_ep_34_si_sdr_10.3204.ckpt
+model_config: configs/exp008_bsroformer_incoherent_n2.yaml
+model_type: bs_roformer
+
+targets:
+  - {split: test, variant: master}
+
+metrics: [si_sdr, usdr]
+usdr_eps: 1.0e-7
+metric_cap_db: 100.0
+silence_config: configs/silence.yaml
+eval_manifest: manifests/parquet/eval_manifest.parquet
+master_lag_table: manifests/parquet/master_lag.parquet
+out_dir: experiments/exp008_261011_bsroformer_incoherent_n2/eval
+seed: 42
+device: cuda:2
+
+render:
+  enabled: false
+  songs: []
+  out_dir: null
