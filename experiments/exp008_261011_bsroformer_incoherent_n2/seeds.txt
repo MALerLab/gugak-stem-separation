@@ -1,0 +1,17 @@
+exp008 seed surfaces — all three at 42, identical to exp006 (and so to exp003.0), so that
+coherent_mix_prob is the only thing that moves between exp008 and exp006.
+
+  1. gugak_mix.seed = 42                         the mix draw stream (config)
+  2. --seed 42 on the trainer                    torch/numpy global, data order (launch.sh)
+  3. head init                                   NOT re-run: exp008 reuses exp003.0's
+                                                 seed-42 start_checkpoint.ckpt as a byte
+                                                 copy (the same file exp006 copied),
+                                                 sha256 recorded in
+                                                 start_checkpoint_sha256.txt
+
+Under DDP each rank seeds torch with (42 + rank) so the replicas draw independent
+dropout streams; the dataset is unaffected because __getitem__ seeds purely from
+(gugak_mix.seed, index). See the fork patch in external/msst/utils/settings.py.
+
+Note: with p = 0.0 the coherent branch never fires, so the per-index mix draws are not
+expected to match exp006's draw-for-draw — same seed, different sampler path.

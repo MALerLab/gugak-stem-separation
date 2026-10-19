@@ -1,0 +1,15 @@
+491b1d849a5d85e7360d5f974afd867ac4851646
+?? configs/exp008.1_bsroformer_continued_to_60.yaml
+?? configs/exp008_bsroformer_incoherent_n2.yaml
+?? experiments/exp008.1_261011_continued_to_60/
+?? experiments/exp008_261011_bsroformer_incoherent_n2/
+31110ff54b7af035a096c17289d41dc722cea9d4
+HEAD
+--- manual resume 2026-10-12T16:18:50+09:00
+491b1d849a5d85e7360d5f974afd867ac4851646
+?? configs/exp008.1_bsroformer_continued_to_60.yaml
+?? configs/exp008_bsroformer_incoherent_n2.yaml
+?? experiments/exp008.1_261011_continued_to_60/
+?? experiments/exp008_261011_bsroformer_incoherent_n2/
+?? scripts/no_thp_exec.py
+31110ff54b7af035a096c17289d41dc722cea9d4
