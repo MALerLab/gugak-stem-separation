@@ -48,6 +48,16 @@ loudness-normalize mixture and targets by the same gain. Returns (stems, mixture
 float32 tensors shaped [n_classes, 2, chunk] / [2, chunk] — the exact batch contract
 MSST's trainer consumes, so this class drops into its DataLoader.
 
+RECORDING-CONDITION AUGMENTATION (`gugak_mix.recording_aug` → src/data/recording_aug.py)
+sits between the per-stem chain and the normalizer: capture response · room convolution ·
+level automation · mix-bus loudness/limiting · an opt-in dirty-input branch. It exists
+because 71955 was recorded in ONE studio, so the corpus has no inter-recording acoustic
+variance for cross-song mixing to exploit, while deployment audio is picked up at a
+distance in an unknown room. The room is drawn PER MIXTURE and SHARED WITHIN one — giving
+each stem its own room would hand the separator an acoustic grouping cue that real
+recordings do not contain. The block is off unless a config says otherwise, and off means
+zero RNG draws, so exp003.x/exp004.x/exp006 are bit-identical to the pre-feature module.
+
 Everything is manifest-driven (source_manifest ⋈ activity_segments ⋈ chunk_activities);
 no directory walking, and no audio is decoded at init. Every knob lives in the
 experiment YAML's `gugak_mix` block — including RESERVED keys for features that are
@@ -76,6 +86,7 @@ from typing import NamedTuple
 import numpy as np
 import pandas as pd
 import pyloudnorm
+import scipy.signal
 import soundfile
 import torch
 import yaml
@@ -83,8 +94,10 @@ from pedalboard import HighShelfFilter, LowShelfFilter, PeakFilter, Pedalboard
 
 try:    # imported as a package module (MSST hook: src.data.mix_dataset)
     from src.data.loudness_match import LoudnessMatchConfig, LoudnessTargetSampler
+    from src.data import recording_aug
 except ModuleNotFoundError:   # imported as a sibling (build_sumstem_eval.py runs so)
     from loudness_match import LoudnessMatchConfig, LoudnessTargetSampler
+    import recording_aug
 
 
 # Safety margin added to the qualifying joint-interval length. A cluster window is
@@ -168,6 +181,14 @@ class MixDatasetConfig:
     # solo-pool loudness pre-conditioning (nested block → LoudnessMatchConfig);
     # absent/empty = disabled = every stem keeps the random-gain treatment
     loudness_match: dict = field(default_factory=dict)
+    # RECORDING-CONDITION augmentation (nested block → src/data/recording_aug.py): the
+    # capture-side stages — device response, room convolution, level automation, mix-bus
+    # loudness/limiting, and the opt-in dirty-input branch. Absent/empty/`enable: false`
+    # consumes NOT ONE RNG draw and runs NOT ONE line of the realisation path, so every
+    # config that predates it stays bit-identical (proved in tests/test_recording_aug.py).
+    # It lives in its own module for the same reason loudness_match does: it is a nested
+    # sub-block with its own config surface and its own DSP.
+    recording_aug: dict = field(default_factory=dict)
     # mixture normalization: loudnorm mixture+targets by one shared gain, then peak-guard
     target_lufs: float = -19.0
     peak_ceiling: float = 0.99
@@ -268,6 +289,11 @@ class MixPlan(NamedTuple):
     "no_eligible_anchor" · "greedy_single_anchor" · "r1_dropped"). Exposure lives in
     `drawn_slots` and is untouched by any of that: shortfall demotes stems to
     incoherent, never removes or replaces them.
+
+    `recording` carries the five recording-condition stages and DEFAULTS TO None — the
+    field is last and optional so that every existing caller that builds or unpacks a
+    MixPlan positionally keeps working, and so a provenance dump of a pre-recording_aug
+    config reads exactly as it did before.
     """
     p: float
     n: int
@@ -279,6 +305,7 @@ class MixPlan(NamedTuple):
     picks: tuple
     shortfall_reasons: tuple
     mixbus_board: Pedalboard | None
+    recording: "recording_aug.RecordingPlan | None" = None
 
 
 # --- EQ augmentation (reimplemented from the Embracing Cacophony recipe) -----
@@ -390,6 +417,22 @@ class GugakMixDataset(torch.utils.data.Dataset):
             LoudnessTargetSampler(self.loudness_match_cfg, self.root, list(cfg.classes),
                                   cfg.segment_seconds)
             if self.loudness_match_cfg.enabled else None)
+
+        # recording-condition augmentation: parsed and cross-validated up front (a
+        # dry-target or dirty-input arm must fail at construction, never halfway through
+        # an epoch), and the RIR/noise banks are attached only when their probability is
+        # actually nonzero — a missing bank under prob > 0 is a hard error, never a
+        # silent no-op.
+        self.recording_cfg = recording_aug.ResolvedRecordingConfig.from_mapping(
+            cfg.recording_aug)
+        self.rir_pool = (
+            recording_aug.RirPool(self.recording_cfg.rir, self.root, cfg.sample_rate,
+                                  self.chunk_frames)
+            if self.recording_cfg.enable and self.recording_cfg.rir.prob > 0.0 else None)
+        self.noise_pool = (
+            recording_aug.NoisePool(self.recording_cfg.dirty, self.root, cfg.sample_rate)
+            if self.recording_cfg.enable and self.recording_cfg.dirty.noise_prob > 0.0
+            else None)
 
         self.pool = self._build_source_pool()
         self.melodic_slots = self._resolve_melodic_slots()
@@ -782,6 +825,31 @@ class GugakMixDataset(torch.utils.data.Dataset):
             audio = board(audio, self.cfg.sample_rate)
         return audio
 
+    def _loudnorm(self, stems: np.ndarray, mixture: np.ndarray,
+                  target_lufs: float) -> tuple[np.ndarray, np.ndarray]:
+        """Measure the mixture and scale mixture AND targets by the one shared gain.
+
+        Split out of `_normalize` so the LimitAug arm can normalize BEFORE the mix bus to
+        a per-item sampled loudness (→ recording_aug.LimitAugConfig: the old fixed −19 LUFS
+        pass run after the limiter erases exactly the loudness diversity the technique
+        exists to create). The arithmetic and its order are untouched, so the default path
+        is bit-identical.
+        """
+        loudness = self.meter.integrated_loudness(mixture.T)
+        if not math.isinf(loudness):
+            gain = np.float32(10 ** ((target_lufs - loudness) / 20))
+            stems, mixture = stems * gain, mixture * gain
+        return stems, mixture
+
+    def _peak_guard(self, stems: np.ndarray,
+                    mixture: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """One shared scale that brings the mixture peak under the ceiling, if it is over."""
+        peak = float(np.abs(mixture).max())
+        if peak > self.cfg.peak_ceiling:
+            scale = np.float32(self.cfg.peak_ceiling / peak)
+            stems, mixture = stems * scale, mixture * scale
+        return stems, mixture
+
     def _normalize(self, stems: np.ndarray,
                    mixture: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Loudnorm mixture AND targets by one shared gain, then peak-guard both.
@@ -790,15 +858,8 @@ class GugakMixDataset(torch.utils.data.Dataset):
         the identical gain to the targets keeps mixture ≡ Σ(targets). The -inf guard
         covers near-silent draws (a lone sparse stem's quiet window).
         """
-        loudness = self.meter.integrated_loudness(mixture.T)
-        if not math.isinf(loudness):
-            gain = np.float32(10 ** ((self.cfg.target_lufs - loudness) / 20))
-            stems, mixture = stems * gain, mixture * gain
-        peak = float(np.abs(mixture).max())
-        if peak > self.cfg.peak_ceiling:
-            scale = np.float32(self.cfg.peak_ceiling / peak)
-            stems, mixture = stems * scale, mixture * scale
-        return stems, mixture
+        stems, mixture = self._loudnorm(stems, mixture, self.cfg.target_lufs)
+        return self._peak_guard(stems, mixture)
 
     # --- cluster draw (the coherent half of a mix) ---
     @staticmethod
@@ -1162,11 +1223,22 @@ class GugakMixDataset(torch.utils.data.Dataset):
 
         mixbus_board = (build_random_eq(rng, self.cfg.eq_mixbus_gain_db, q_max=3.0)
                         if rng.random() < self.cfg.eq_mixbus_prob else None)
+        # recording-condition stages LAST in the stream, so adding them cannot shift a
+        # single draw of the mixing sampler above — that is what makes an existing config
+        # bit-identical rather than merely statistically equivalent
+        recording = recording_aug.plan_recording(
+            rng, self.recording_cfg, self.rir_pool, self.noise_pool,
+            slots=tuple(sorted(pick.slot for pick in picks)),
+            cluster_of_slot={pick.slot: pick.cluster_index for pick in picks
+                             if pick.cluster_index is not None},
+            sample_rate=self.cfg.sample_rate, segment_seconds=self.cfg.segment_seconds,
+            chunk_frames=self.chunk_frames)
         return MixPlan(p=p, n=n, drawn_slots=tuple(int(s) for s in drawn),
                        k_target=p * n, k_declared=k_declared,
                        k_realised=sum(len(c.member_slots) for c in clusters),
                        clusters=tuple(clusters), picks=tuple(picks),
-                       shortfall_reasons=tuple(reasons), mixbus_board=mixbus_board)
+                       shortfall_reasons=tuple(reasons), mixbus_board=mixbus_board,
+                       recording=recording)
 
     def _plan_incoherent_stem(self, rng: np.random.Generator, slot: int) -> StemPick:
         """One incoherent stem, fully decided: independent song, offset, augmentation.
@@ -1223,9 +1295,141 @@ class GugakMixDataset(torch.utils.data.Dataset):
                 stems[pick.slot] = plan.mixbus_board(stems[pick.slot],
                                                      self.cfg.sample_rate)
 
-        mixture = stems.sum(axis=0)
-        stems, mixture = self._normalize(stems, mixture)
+        if plan.recording is not None:
+            stems, mixture = self._realise_recording(plan, stems)
+        else:
+            mixture = stems.sum(axis=0)
+            stems, mixture = self._normalize(stems, mixture)
         return torch.from_numpy(stems), torch.from_numpy(mixture)
+
+    # --- recording-condition realisation (stages 1–5) ---
+    def _realise_recording(self, plan: MixPlan,
+                           stems: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Apply the planned recording stages and return (stems, mixture).
+
+        Order is the report's §5.1 pipeline: capture chain → room → level → sum → mix bus
+        → degradation → normalization. Only the DRAWN slots are processed; the rest of the
+        tensor is silence and convolving nine zeros would be pure cost (n averages 5.5
+        under n ~ U{2..9}, so this is a 40% saving on every FFT in the item).
+
+        Stages 1–3 are linear and are applied to the TARGETS, with the mixture rebuilt as
+        their sum afterwards, so mixture ≡ Σ(targets) is true by construction rather than
+        by cancellation. Only stage 4 (nonlinear bus) and stage 5 (mixture-only
+        degradation) need the explicit target policies in recording_aug.
+
+        Args:
+            plan: the item's MixPlan, whose `recording` field is not None.
+            stems: (n_classes, 2, chunk) with the drawn slots already filled.
+        """
+        rec = plan.recording
+        cfg = self.recording_cfg
+        slots = sorted(pick.slot for pick in plan.picks)
+        active = stems[slots]                                    # (n, 2, chunk) copy
+        position_of = {slot: index for index, slot in enumerate(slots)}
+
+        # --- stage 1: capture chain (minimum-phase biquads; linear → targets follow) ---
+        for group, sos in rec.device:
+            rows = [position_of[slot] for slot in group]
+            # sosfilt promotes to the SOS dtype (float64); cast back so the chain stays
+            # float32 end to end, as the gain path's np.float32 casts already ensure
+            active[rows] = scipy.signal.sosfilt(sos, active[rows],
+                                                axis=-1).astype(np.float32)
+
+        # --- stage 2: room ---
+        dry = None
+        if rec.rir is not None:
+            if rec.rir.target_mode == "dry_source":
+                dry = active.copy()      # the dereverberation arm keeps the dry targets
+            rows_per_stem = [0] * len(slots)
+            for assignment in rec.rir.assignments:
+                for slot in assignment.slots:
+                    rows_per_stem[position_of[slot]] = assignment.row
+            active = self.rir_pool.convolve(active, rows_per_stem)
+
+        # --- stage 3: level automation (before the sum, so the sum stays exact) ---
+        for envelope in rec.envelopes:
+            curve = recording_aug.realise_envelope(envelope, self.chunk_frames,
+                                                   self.cfg.sample_rate)
+            rows = (slice(None) if envelope.slots is None
+                    else [position_of[slot] for slot in envelope.slots])
+            active[rows] = active[rows] * curve
+            if dry is not None:
+                dry[rows] = dry[rows] * curve     # shared level rides both task views
+
+        stems[slots] = active if dry is None else dry
+        mixture = active.sum(axis=0)
+
+        # --- stage 4: mix bus ---
+        if rec.bus is not None:
+            stems, mixture = self._apply_bus(rec.bus, stems, mixture, slots)
+        else:
+            stems, mixture = self._normalize(stems, mixture)
+
+        # --- stage 5: degrade the MIXTURE only (targets stay clean, sum breaks) ---
+        if rec.dirty is not None:
+            mixture = self._apply_dirty(rec.dirty, mixture)
+
+        if cfg.assert_invariant and cfg.coherence_mode == "strict_sum":
+            error = float(np.abs(mixture - stems.sum(axis=0)).max())
+            if error >= cfg.silence_eps:
+                raise AssertionError(
+                    f"strict_sum violated: max|mixture - Σstems| = {error:.3e} "
+                    f">= silence_eps {cfg.silence_eps:.3e}")
+        return np.ascontiguousarray(stems), np.ascontiguousarray(mixture)
+
+    def _apply_bus(self, bus, stems: np.ndarray, mixture: np.ndarray,
+                   slots: list) -> tuple[np.ndarray, np.ndarray]:
+        """Stage 4 — pre-bus loudness, limiter, and the §4.3 target allocation.
+
+        The pre-bus normalization is what carries the loudness diversity: `target_lufs`
+        is nan when `loudness_mode: fixed`, in which case the dataset's own −19 LUFS is
+        used and only the limiter's waveform shaping varies. After the limiter the targets
+        are bus-affected source images r·s_i, and the float residual is pushed onto the
+        locally dominant stem so that mixture ≡ Σ(targets) is restored EXACTLY.
+        """
+        target_lufs = (self.cfg.target_lufs if math.isnan(bus.target_lufs)
+                       else bus.target_lufs)
+        stems, mixture = self._loudnorm(stems, mixture, target_lufs)
+        if bus.release_ms is not None:
+            gain = recording_aug.limiter_gain(mixture, bus.threshold_dbfs, bus.attack_ms,
+                                              bus.release_ms, self.cfg.sample_rate)
+            limited = mixture * gain
+            ratio = recording_aug.bus_ratio(mixture, limited,
+                                            self.recording_cfg.silence_eps)
+            # fancy indexing returns a COPY, so the allocation is edited and written back
+            # in one place rather than through a view that does not exist
+            allocated = stems[slots] * ratio
+            if bus.residual_correction:
+                recording_aug.add_residual(allocated, limited - allocated.sum(axis=0))
+            stems[slots] = allocated
+            mixture = allocated.sum(axis=0)
+        if bus.normalize_after_bus:
+            stems, mixture = self._loudnorm(stems, mixture, self.cfg.target_lufs)
+        return self._peak_guard(stems, mixture)
+
+    def _apply_dirty(self, dirty, mixture: np.ndarray) -> np.ndarray:
+        """Stage 5 — noise → resample → quantize → clip, on the mixture alone.
+
+        Report §5.1's order. Every one of these is a mixture-only operation and the
+        targets deliberately stay clean, which is why it is unreachable outside
+        `coherence_mode: clean_under_degraded_input`.
+        """
+        if dirty.noise_row is not None:
+            noise = self.noise_pool.read(dirty.noise_row, dirty.noise_start,
+                                         self.chunk_frames)
+            signal_rms = float(np.sqrt(np.mean(mixture.astype(np.float64) ** 2)))
+            noise_rms = float(np.sqrt(np.mean(noise.astype(np.float64) ** 2)))
+            if noise_rms > 0 and signal_rms > 0:
+                wanted = signal_rms / (10 ** (dirty.noise_snr_db / 20.0))
+                mixture = mixture + noise * np.float32(wanted / noise_rms)
+        if dirty.resample_hz is not None:
+            mixture = recording_aug.apply_resample_roundtrip(
+                mixture, self.cfg.sample_rate, dirty.resample_hz)
+        if dirty.quantize_bits is not None:
+            mixture = recording_aug.apply_quantize(mixture, dirty.quantize_bits)
+        if dirty.clip_dbfs is not None:
+            mixture = recording_aug.apply_clip(mixture, dirty.clip_dbfs)
+        return mixture
 
     def __len__(self) -> int:
         return self.num_items
