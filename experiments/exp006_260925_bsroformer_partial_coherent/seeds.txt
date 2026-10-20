@@ -1,0 +1,13 @@
+exp006 seed surfaces — all three at 42, inherited from exp003.0 so that coherence is
+the only model-side variable between the two arms.
+
+  1. gugak_mix.seed = 42                         the mix draw stream (config)
+  2. --seed 42 on the trainer                    torch/numpy global, data order (launch.sh)
+  3. head init                                   NOT re-run: exp006 reuses exp003.0's
+                                                 seed-42 start_checkpoint.ckpt as a byte
+                                                 copy, sha256 recorded in
+                                                 start_checkpoint_sha256.txt
+
+Under DDP each rank seeds torch with (42 + rank) so the replicas draw independent
+dropout streams; the dataset is unaffected because __getitem__ seeds purely from
+(gugak_mix.seed, index). See the fork patch in external/msst/utils/settings.py.
