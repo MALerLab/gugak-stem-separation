@@ -1,0 +1,235 @@
+<title>Gugak Augmentation A/B</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* layout: one column of items; each item = header + one row per stem; sticky save bar at the top */
+:root{
+  --bg:#fbfbf9;--panel:#ffffff;--fg:#14181a;--muted:#5c6468;--line:#dfe2df;
+  --accent:#2f62c4;          /* 군청 ultramarine, from configs/palette_dancheong.yaml */
+  --accent-soft:#e6edfa;
+  --warn:#d9512c;            /* 주홍 vermilion: unsaved changes */
+  --warn-soft:#fbe9e3;
+  --ok:#1f9e78;              /* 석록 malachite: saved */
+  --chip:#eef0ee;
+  --sans:"IBM Plex Sans","IBM Plex Sans KR",system-ui,-apple-system,"Segoe UI","Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#121517;--panel:#191d20;--fg:#e6eaec;--muted:#98a2a8;--line:#2b3135;
+  --accent:#7ea2ec;--accent-soft:#1d2a44;--warn:#f08a68;--warn-soft:#3a2219;--ok:#5fcfa6;--chip:#23292d;color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#121517;--panel:#191d20;--fg:#e6eaec;--muted:#98a2a8;--line:#2b3135;
+  --accent:#7ea2ec;--accent-soft:#1d2a44;--warn:#f08a68;--warn-soft:#3a2219;--ok:#5fcfa6;--chip:#23292d;color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:15px;line-height:1.45;
+  padding-block:0 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+.wrap{max-width:860px;margin:0 auto;display:grid;gap:20px}
+header.intro{display:grid;gap:8px;padding-top:24px}
+h1{font-size:1.45rem;margin:0;text-wrap:balance;letter-spacing:-.01em}
+.intro p{margin:0;color:var(--muted);max-width:68ch}
+.savebar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);
+  display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding-block:12px;border-bottom:1px solid var(--line)}
+.savebar .progress{font-variant-numeric:tabular-nums;color:var(--muted);font-size:.9rem}
+.savebar .state{font-size:.85rem;padding:3px 10px;border-radius:999px;background:var(--chip);color:var(--muted)}
+.savebar .state.dirty{background:var(--warn-soft);color:var(--warn);font-weight:600}
+.savebar .state.saved{color:var(--ok)}
+.savebar .spacer{flex:1}
+button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--fg);padding:6px 12px}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--bg);font-weight:600;padding:8px 18px}
+button.primary.dirty{background:var(--warn);border-color:var(--warn)}
+button:disabled{opacity:.5;cursor:default}
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:.9rem;color:var(--muted)}
+.filters select{font:inherit;padding:4px 8px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--fg)}
+.item{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.item-head{display:grid;gap:6px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.item-title{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+.item-title h2{font-size:1.05rem;margin:0}
+.badge{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:999px;background:var(--chip);color:var(--muted)}
+.badge.master{background:var(--accent-soft);color:var(--accent)}
+.item-meta{font-size:.82rem;color:var(--muted);font-family:var(--mono);overflow-wrap:anywhere}
+.mixture{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:.85rem;color:var(--muted)}
+audio{height:34px;max-width:100%}
+.row{display:grid;gap:10px;padding:14px 16px;border-top:1px solid var(--line)}
+.row:first-of-type{border-top:0}
+.row.done{background:linear-gradient(90deg,var(--accent-soft),transparent 40%)}
+.row-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.stem{font-weight:600;font-size:1rem;min-width:4em}
+.reveal{font-size:.8rem;padding:3px 10px;color:var(--muted)}
+.revealed{font-size:.8rem;font-family:var(--mono);color:var(--muted)}
+.players{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}
+.player{display:grid;gap:4px;min-width:0}
+.player label{font-size:.78rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.player audio{width:100%}
+.choice{display:flex;flex-wrap:wrap;gap:6px}
+.choice button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--bg)}
+.tags{display:flex;flex-wrap:wrap;gap:6px;font-size:.85rem}
+.tags label{display:inline-flex;gap:5px;align-items:center;padding:3px 10px;border-radius:999px;background:var(--chip);cursor:pointer}
+.note{width:100%;box-sizing:border-box;font:inherit;font-size:.9rem;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);resize:vertical;min-height:2.2em}
+.empty{padding:32px 16px;text-align:center;color:var(--muted)}
+.export{display:grid;gap:8px}
+.export textarea{width:100%;box-sizing:border-box;min-height:8em;font-family:var(--mono);font-size:.8rem;background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px}
+.msg{font-size:.85rem;color:var(--muted)}
+.msg.bad{color:var(--warn)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap">
+  <header class="intro">
+    <h1>Gugak augmentation A/B</h1>
+    <p>Two separation models, same recipe except for recording-condition augmentation (EQ, capture chain, room). For each stem, pick which version sounds better. A and B are shuffled per row. Master items also have the true stem to compare against.</p>
+  </header>
+
+  <div class="savebar" role="region" aria-label="Progress and saving">
+    <span class="progress" id="progress">0 / 0 answered</span>
+    <span class="state" id="state">nothing to save</span>
+    <span class="spacer"></span>
+    <button class="primary" id="save" type="button" disabled>Save</button>
+  </div>
+
+  <div class="filters">
+    <label for="filter-type">Show</label>
+    <select id="filter-type">
+      <option value="all">all items</option>
+      <option value="master">master songs</option>
+      <option value="youtube">YouTube recordings</option>
+      <option value="open">unanswered rows only</option>
+    </select>
+    <span class="msg" id="who"></span>
+  </div>
+
+  <main id="items"><div class="empty">Loading the listening items…</div></main>
+
+  <section class="export" aria-label="Backup copy of answers">
+    <p class="msg">Backup: if saving isn't available for you, copy your answers below and send them to Jae.</p>
+    <div><button type="button" id="copy">Copy answers</button> <span class="msg" id="copy-msg"></span></div>
+    <textarea id="export" readonly></textarea>
+  </section>
+</div>
+
+<script>
+const TAGS=[["bleed","bleed"],["artifacts","artifacts"],["missing","missing content"],["room","room / reverb"]];
+const state={items:[],answers:{},dirty:false,db:null,docRef:null,filter:"all"};
+
+const el=(tag,props={},...kids)=>{const n=document.createElement(tag);Object.assign(n,props);for(const k of kids)n.append(k);return n};
+const rowKey=(clip,stem)=>clip+"|"+stem;
+const allRows=()=>state.items.flatMap(it=>it.rows.map(r=>({item:it,row:r,key:rowKey(it.clip,r.stem)})));
+
+function setDirty(d){
+  state.dirty=d;
+  const s=document.getElementById("state"),b=document.getElementById("save");
+  s.className="state"+(d?" dirty":"");s.textContent=d?"unsaved changes":s.dataset.saved||"nothing to save";
+  b.classList.toggle("dirty",d);b.disabled=!d||!state.docRef;
+  updateProgress();updateExport();
+}
+function updateProgress(){
+  const rows=allRows(),done=rows.filter(x=>state.answers[x.key]?.choice).length;
+  document.getElementById("progress").textContent=done+" / "+rows.length+" answered";
+}
+function updateExport(){document.getElementById("export").value=JSON.stringify({answers:state.answers},null,1)}
+
+function answer(key){return state.answers[key]||(state.answers[key]={choice:null,tags:[],note:"",revealed:false,revealed_before_answer:false})}
+
+function renderRow(item,row){
+  const key=rowKey(item.clip,row.stem),a=answer(key);
+  const box=el("div",{className:"row"+(a.choice?" done":"")});
+  const revealed=el("span",{className:"revealed"});
+  const showReveal=()=>{revealed.textContent=a.revealed?("A = "+row.a_model+" · B = "+row.b_model):""};
+  const reveal=el("button",{type:"button",className:"reveal",textContent:a.revealed?"hide":"reveal"});
+  reveal.onclick=()=>{
+    if(!a.revealed&&!a.choice)a.revealed_before_answer=true;
+    a.revealed=!a.revealed;reveal.textContent=a.revealed?"hide":"reveal";showReveal();setDirty(true)};
+  showReveal();
+  box.append(el("div",{className:"row-head"},el("span",{className:"stem",textContent:row.stem}),reveal,revealed));
+
+  const players=el("div",{className:"players"});
+  const addPlayer=(label,src)=>{if(!src)return;const p=el("div",{className:"player"});
+    p.append(el("label",{textContent:label}),el("audio",{controls:true,preload:"none",src}));players.append(p)};
+  addPlayer("A",row.a);addPlayer("B",row.b);addPlayer("True stem",row.true);
+  box.append(players);
+
+  const choice=el("div",{className:"choice",role:"group"});
+  for(const [val,label] of [["A","A better"],["B","B better"],["same","no real difference"]]){
+    const b=el("button",{type:"button",textContent:label});b.setAttribute("aria-pressed",a.choice===val);
+    b.onclick=()=>{a.choice=a.choice===val?null:val;a.answered_at=new Date().toISOString();
+      for(const c of choice.children)c.setAttribute("aria-pressed","false");
+      if(a.choice)b.setAttribute("aria-pressed","true");box.classList.toggle("done",!!a.choice);setDirty(true)};
+    choice.append(b)}
+  box.append(choice);
+
+  const tags=el("div",{className:"tags"});
+  for(const [val,label] of TAGS){
+    const id="t-"+key.replace(/[^\w-]/g,"_")+"-"+val;
+    const cb=el("input",{type:"checkbox",id,checked:a.tags.includes(val)});
+    cb.onchange=()=>{a.tags=cb.checked?[...new Set([...a.tags,val])]:a.tags.filter(t=>t!==val);setDirty(true)};
+    tags.append(el("label",{htmlFor:id},cb,label))}
+  box.append(tags);
+
+  const note=el("textarea",{className:"note",rows:1,placeholder:"note (optional)",value:a.note||"",id:"n-"+key.replace(/[^\w-]/g,"_")});
+  note.oninput=()=>{a.note=note.value;setDirty(true)};
+  box.append(note);
+  return box;
+}
+
+function render(){
+  const main=document.getElementById("items");main.replaceChildren();
+  let shown=0;
+  for(const item of state.items){
+    if(state.filter==="master"&&item.item_type!=="master")continue;
+    if(state.filter==="youtube"&&item.item_type!=="youtube")continue;
+    const rows=state.filter==="open"?item.rows.filter(r=>!state.answers[rowKey(item.clip,r.stem)]?.choice):item.rows;
+    if(!rows.length)continue;
+    const box=el("article",{className:"item"});
+    const head=el("div",{className:"item-head"});
+    head.append(el("div",{className:"item-title"},
+      el("span",{className:"badge"+(item.item_type==="master"?" master":""),textContent:item.item_type==="master"?"master":"YouTube"}),
+      el("h2",{textContent:item.title})));
+    if(item.meta)head.append(el("div",{className:"item-meta",textContent:item.meta}));
+    const mix=el("div",{className:"mixture"},el("span",{textContent:"input mix"}),el("audio",{controls:true,preload:"none",src:item.mixture}));
+    head.append(mix);box.append(head);
+    for(const r of rows)box.append(renderRow(item,r));
+    main.append(box);shown++;
+  }
+  if(!shown)main.append(el("div",{className:"empty",textContent:state.filter==="open"?"Every row is answered.":"No items to show."}));
+  updateProgress();
+}
+
+async function save(){
+  if(!state.docRef||!state.dirty)return;
+  const b=document.getElementById("save"),s=document.getElementById("state");
+  b.disabled=true;s.textContent="saving…";
+  try{
+    await state.docRef.set({answers:JSON.parse(JSON.stringify(state.answers)),saved_at:new Date().toISOString()});
+    s.dataset.saved="saved "+new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+    s.className="state saved";setDirty(false);s.className="state saved";
+  }catch(e){
+    s.className="state dirty";s.textContent=e?.code==="invalid_argument"?"can't save with your access level; use Copy answers below":"save failed, try again";
+    b.disabled=false;
+  }
+}
+
+async function connect(){
+  const who=document.getElementById("who");
+  try{
+    const claude=window.claude;if(!claude?.use){who.textContent="Saving unavailable here; use Copy answers.";return}
+    const [db,user]=await Promise.all([claude.use("db"),claude.use("user")]);
+    const id=user?await user.id():null;
+    if(!db||!id){who.textContent="Saving needs a signed-in claude.ai account; use Copy answers.";return}
+    state.db=db;state.docRef=db.doc("answers/"+id);
+    const snap=await state.docRef.get();
+    if(snap.exists&&!state.dirty){state.answers=JSON.parse(JSON.stringify(snap.data().answers||{}));
+      document.getElementById("state").dataset.saved="restored last save";render()}
+    const me=await user.me();who.textContent=(me.name?"Listening as "+me.name+". ":"")+"Answers save to your own copy.";
+    setDirty(state.dirty);
+  }catch(e){who.textContent="Saving unavailable right now; use Copy answers."}
+}
+
+document.getElementById("save").onclick=save;
+document.getElementById("filter-type").onchange=e=>{state.filter=e.target.value;render()};
+document.getElementById("copy").onclick=async()=>{
+  const t=document.getElementById("export"),m=document.getElementById("copy-msg");
+  try{await navigator.clipboard.writeText(t.value);m.textContent="copied"}catch{t.select();m.textContent="selected; press Ctrl/Cmd+C"}};
+window.addEventListener("beforeunload",e=>{if(state.dirty){e.preventDefault()}});
+
+fetch("rows.json").then(r=>r.json()).then(data=>{state.items=data.items;render();setDirty(false);connect()})
+  .catch(()=>{document.getElementById("items").replaceChildren(el("div",{className:"empty",textContent:"Couldn't load the listening items. Reload the page."}))});
+</script>

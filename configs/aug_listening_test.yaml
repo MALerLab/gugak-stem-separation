@@ -1,0 +1,59 @@
+# aug_listening_test.yaml — shared config for the augmentation listening test
+# (docs/aug_listening_test_spec.md). Read by stages 2–5:
+#   scripts/aug_listening_pick_songs.py      stage 2: master songs + 30 s windows
+#   scripts/aug_listening_cut_clips.py       stage 3a: master window clips + true stems
+#   configs/render/aug_listening_*.yaml      stage 3b: model renders (src.render_demo)
+#   scripts/aug_listening_build_page.py      stage 4: A/B page data + MP3 encodes
+#   scripts/aug_listening_tally.py           stage 5: tally
+
+# --- the pair: only the augmentation differs ---
+models:
+  baseline:
+    run: exp006
+    eval_dir: experiments/exp006_260925_bsroformer_partial_coherent/eval
+    eval_run_id: eval_exp006_ep34_test_master_aligned
+    render_label: exp006            # render folder <label>_ep34/
+  augmented:
+    run: exp007
+    eval_dir: experiments/exp007_260925_bsroformer_room_distance/eval
+    eval_run_id: eval_exp007_ep34_test_master_aligned
+    render_label: exp007
+epoch: 34
+
+classes: [가야금, 거문고, 기타, 대금, 아쟁, 양금, 타악기, 피리, 해금]
+
+# --- stage 2: song picks ---
+pick:
+  metric: si_sdr                    # per-stem score used for d = augmented − baseline
+  min_songs_per_stem: 2             # every stem gets at least this many picked songs
+  window_s: 30.0
+  activity_chunk_len_s: 10.0        # chunk_activities grain the window is built from
+  # a stem counts as covered in a window if it is active this fraction of the window
+  min_window_coverage: 0.5
+  eval_manifest: manifests/parquet/eval_manifest.parquet
+  activity_table: manifests/parquet/chunk_activities.parquet
+  out_table: aug_listening_picks    # manifests/parquet/<name>.parquet (+ csv twin)
+
+# --- stage 3: clips + renders (server NVMe via the data/ symlink) ---
+clips:
+  source_manifest: manifests/parquet/source_manifest_v2.parquet
+  master_lag_table: manifests/parquet/master_lag.parquet
+  out_root: data/aug_listening_test/master_clips     # <song_window>/{mixture,true_<stem>}.wav
+youtube:
+  demo_set_manifest: manifests/demo_sets/v2.parquet
+  clip_dir: data/gugak_demo_set/v2/final/normalised
+  # out of vocabulary (대취타), orchestral doubling (해금 협주곡), voice (판소리)
+  exclude_items: [daechwita, haegeum_concerto, pansori]
+  # test-split masters in demo set v2 are covered by the master picks instead
+  exclude_source_kinds: [dataset_master]
+render_root: data/aug_listening_test/renders
+
+# --- stage 4: page ---
+page:
+  seed: 20261020                    # A/B assignment per row
+  # MP3: plays in every browser incl. Safari; .m4a is not a served artifact type
+  audio_format: mp3
+  bitrate_kbps: 160
+  # a row is skipped when every version is this quiet (dBFS RMS)
+  silent_row_dbfs: -60.0
+  out_dir: data/aug_listening_test/page

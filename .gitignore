@@ -13,6 +13,8 @@ __pycache__/
 # demo pool (data/gugak_demo_set → ~/storage/gugak-demo-set): incl. YouTube-sourced audio,
 # never ours to commit — the manifest under manifests/demo_sets/ is the tracked record.
 /data/gugak_demo_set
+# augmentation listening test audio (data/aug_listening_test → ~/storage/gugak-aug-listening)
+/data/aug_listening_test
 # demo-set manifests: parquet is canonical; the CSV twins are eyeball copies, regenerable
 manifests/demo_sets/*.csv
 

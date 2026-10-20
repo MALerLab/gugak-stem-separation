@@ -1,0 +1,20 @@
+# configs/render/aug_listening_exp006_ep34.yaml — render job for src/render_demo.py.
+# Augmentation listening test, stage 3b (docs/aug_listening_test_spec.md): exp006 ep34
+# (baseline: partially coherent, no augmentation) over every listening clip — lag-aligned master windows + in-vocabulary
+# YouTube items from demo set v2 (scripts/aug_listening_cut_clips.py builds inputs/).
+# Sibling job differs only in checkpoint, model config and run_label. FLAC masters; the page
+# build encodes Opus.
+
+checkpoint: experiments/exp006_260925_bsroformer_partial_coherent/checkpoints/model_bs_roformer_ep_34_si_sdr_11.2352.ckpt
+model_config: configs/exp006_bsroformer_partial_coherent.yaml
+model_type: bs_roformer
+run_label: exp006                  # output folder: <run_label>_ep<N>/
+
+input_glob: data/aug_listening_test/inputs/*.wav
+clip_name_strip_suffix: ""
+
+output_root: data/aug_listening_test/renders
+audio:
+  format: FLAC
+  compression_level: 0.5
+  write_mixture: false             # the page reads mixtures from inputs/
