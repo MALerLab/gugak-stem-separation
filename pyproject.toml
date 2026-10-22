@@ -60,3 +60,7 @@ dev = [
     "pyroomacoustics>=0.10.1",
     "pytest>=9.1.1",
 ]
+
+[tool.pytest.ini_options]
+# Only our own tests; external/msst's tests/ trips pytest on a helper named test_settings
+testpaths = ["tests"]
