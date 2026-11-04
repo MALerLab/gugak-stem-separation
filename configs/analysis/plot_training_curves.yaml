@@ -41,6 +41,7 @@ runs:
 settings:
   metric: si_sdr
   x_axis: epoch                    # epoch | optimizer_steps
+  max_epoch: null                  # last epoch index drawn (inclusive); null = whole history
   rolling_checkpoint_glob: "last_*.ckpt"
   best_checkpoint_glob: "model_*_ep_*.ckpt"
   palette_path: configs/palette_dancheong.yaml

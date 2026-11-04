@@ -62,6 +62,7 @@ class Run:
     config_path: Path
     status: str = "finished"  # "finished" | "running" — running is flagged in the legend
     seed: int | None = None  # shown as `(s:N)` in the legend for seed-family runs
+    color: str | None = None  # hex overriding the palette slot (validate it first)
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,7 @@ class Settings:
     no field has an in-code default, so the YAML stays the single source of values."""
     metric: str
     x_axis: str  # "epoch" | "optimizer_steps"
+    max_epoch: int | None  # last epoch index drawn (inclusive); None = whole history
     rolling_checkpoint_glob: str
     best_checkpoint_glob: str
     palette_path: Path
@@ -113,7 +115,8 @@ def load_config(config_path: Path) -> tuple[tuple[Run, ...], Settings]:
                      experiment_dir=Path(entry["experiment_dir"]),
                      config_path=Path(entry["config_path"]),
                      status=entry.get("status", "finished"),
-                     seed=entry.get("seed"))
+                     seed=entry.get("seed"),
+                     color=entry.get("color"))
                  for entry in raw["runs"])
     values = dict(raw["settings"])
     for field_name in SETTINGS_PATH_FIELDS:
@@ -274,8 +277,13 @@ def build_curves_tables(runs: tuple[Run, ...], settings: Settings,
         trajectories.append(build_run_trajectory(run, checkpoint_path, all_metrics, settings))
         genre_trajectories.append(build_run_genre_trajectory(
             run, all_metrics, scored_songs, song_genres, settings))
-    return (pd.concat(trajectories, ignore_index=True),
-            pd.concat(genre_trajectories, ignore_index=True))
+    curves = pd.concat(trajectories, ignore_index=True)
+    genre_curves = pd.concat(genre_trajectories, ignore_index=True)
+    # cut every run at the same epoch so continued runs line up with shorter ones
+    if settings.max_epoch is not None:
+        curves = curves[curves["epoch"] <= settings.max_epoch].reset_index(drop=True)
+        genre_curves = genre_curves[genre_curves["epoch"] <= settings.max_epoch].reset_index(drop=True)
+    return curves, genre_curves
 
 
 def summarize_runs(curves: pd.DataFrame, settings: Settings) -> pd.DataFrame:
@@ -304,12 +312,13 @@ def load_palette(palette_path: Path) -> dict:
 
 
 def assign_run_colors(runs: tuple[Run, ...], palette: dict) -> dict[str, str]:
-    """Run label -> hex, walking the palette's validated slot order without cycling."""
+    """Run label -> hex, walking the palette's validated slot order without cycling.
+    A run's own `color` wins over its slot."""
     slots = [slot["hex"] for slot in palette["slots"]]
     if len(runs) > len(slots):
         raise ValueError(f"{len(runs)} runs but only {len(slots)} palette slots — "
                          "fold runs or facet; never generate a 9th hue")
-    return {run.label: slots[index] for index, run in enumerate(runs)}
+    return {run.label: run.color or slots[index] for index, run in enumerate(runs)}
 
 
 def legend_label(summary_row: pd.Series, settings: Settings) -> str:
