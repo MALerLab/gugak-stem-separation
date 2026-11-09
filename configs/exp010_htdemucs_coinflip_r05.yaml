@@ -1,0 +1,252 @@
+# exp010_htdemucs_coinflip_r05.yaml — HTDemucs, item-grain coin flip at ratio 0.5. One
+# config = one wandb run (exp010_261103_htdemucs_coinflip_r05).
+#
+# WHY THIS RUN EXISTS. LBD Q&A prep (prof mtg 2026-10-12 / 2026-11-02), numbers behind the
+# Slack room, NOT a paper result. Prof's idea: rather than Jae's partially coherent recipe on
+# every mix (exp004), mix at ITEM grain — each mix is either a partially coherent (p=1) draw
+# or fully incoherent, by coin. coherent_item_ratio = r = P(partially coherent). The two
+# ends already exist on disk: r = 1 IS exp004 (bit-identical plans, verified 2026-11-03),
+# r = 0 IS exp004.1's recipe. This fills r = 0.5. Compare at matching epochs.
+#
+# Realised dose, plan-only, 20k draws, seed 45 (scratch check 2026-11-03):
+#   exp004 (r=1):       92% stems coherent, 63.5% melodic pairs coherent, 1.38 clusters/mix
+#   exp010 (r=0.5):     45% stems coherent, 31.3% melodic pairs coherent, 0.68 clusters/mix
+#   the p=0.5 version:  49% stems coherent, 26.9% melodic pairs coherent, 0.90 clusters/mix
+#
+# DERIVED FROM exp004 (configs/exp004_htdemucs_coherent_p1_uniform.yaml). EXACTLY THESE
+# LEAVES DIFFER (each marked [exp010] below):
+#   gugak_mix.coherent_item_ratio   —   → 0.5    the experiment (new key; unset = no coin)
+#   training.num_epochs             60  → 35     time box: results before ISMIR 2026-11-08
+#   training.use_torch_compile      —   → true   speed, measured 2026-11-03 on GPU 2
+#                                                (scripts/bench_compile.py, training step only):
+#                                                batch 8: eager 0.437 → compile 0.260 s/step
+#                                                (1.68×, 22 GiB). Batch 16/32 gain ≤ 6% more,
+#                                                so batch 8 × accum 4 stays as exp004's.
+#   training.run_name                            run-scoped
+# Seeds stay at exp004's 45 on all three surfaces, and the launcher reuses exp004's
+# seed-45 start_checkpoint.ckpt. torch.compile reorders reductions, so this run is
+# statistically, not bitwise, comparable to exp004/exp004.1 (as exp006 vs exp003.0).
+#
+# ⚠️ THE COLLAPSE IS THE MEASUREMENT (inherited). No stop, no resume, no hand-set lr on a
+# quality drop — only a genuine fault justifies stopping.
+
+# --- MSST: audio geometry ---
+audio:
+  chunk_size: 441000        # 10 s × 44100 — the checkpoint's native training length
+  min_mean_abs: 0.0         # unused: our dataset does activity-aware draws itself
+  hop_length: 1024
+
+# --- MSST: training ---
+training:
+  run_name: exp010_261103_htdemucs_coinflip_r05   # [exp010] run-scoped
+  use_torch_compile: true          # [exp010] speed; see header
+  custom_dataset: "src.data.mix_dataset:create_msst_dataset"   # fork hook → our loader
+  batch_size: 8                     # physical, per spec (× accum 4 → effective 32)
+  gradient_accumulation_steps: 4
+  grad_clip: 5.0                    # HTDemucs ft recipe (L2 norm)
+  segment: 10
+  shift: 1
+  samplerate: 44100
+  channels: 2
+  normalize: false                  # normalization owned by the dataset (−19 LUFS tuple)
+  instruments: [가야금, 거문고, 기타, 대금, 아쟁, 양금, 타악기, 피리, 해금]  # = gugak_mix.classes
+  target_instrument: null
+  num_epochs: 35                    # [exp010] was 60 — time box, see header
+  num_steps: 10000                  # loader iterations per "epoch" = 2,500 OPTIMIZER
+                                    # steps at accum 4 → eval every 2,500 steps (spec)
+  optimizer: adam
+  lr: 1.0e-04                       # [exp002] the HTDemucs fine-tune recipe's own value
+                                    # (⅓ of their from-scratch lr). exp001 ran at 5e-5
+                                    # nominal / 2.5e-5 live only because of the post-cliff
+                                    # resume — that halving is history, not a decision to
+                                    # inherit. Launching fresh means nothing overrides it.
+  patience: 5                       # ReduceLROnPlateau (scheduler, NOT early stop —
+                                    # MSST HAS no early stop; the plateau stop is manual,
+                                    # see the launch script's STOP POLICY)
+  reduce_factor: 0.5
+  q: 0.95
+  coarse_loss_clip: true
+  ema_momentum: 0                   # OFF — MSST single-GPU path never evals/saves EMA
+                                    # weights (dead overhead) → DEVIATION, see report
+  other_fix: false
+  use_amp: true                     # bf16 FROM LAUNCH (exp001 reached it mid-run). bf16
+  amp_dtype: bfloat16               # carries fp32's exponent range in 16 bits, so the
+                                    # fp16 overflow behind exp001's two cliffs is
+                                    # structurally impossible; the exp001.1 probe logged
+                                    # 0 non-finite steps in 40,000. GradScaler
+                                    # auto-disables under bf16 (verify the AMP: line
+                                    # prints grad_scaler_enabled=False); STFT/iSTFT stay
+                                    # fp32-pinned in the model regardless.
+  inference_amp_dtype: float32      # eval stays pure fp32 — the same measuring instrument
+                                    # as exp001, so val curves remain directly comparable
+
+# --- MSST: stock augmentations OFF — all augs live in gugak_mix ---
+augmentations:
+  enable: false
+
+# --- MSST: eval-time chunked inference ---
+inference:
+  num_overlap: 2            # step = chunk/2 → 50% overlap (MSST integer semantics;
+                            # spec's 25% is not expressible — deviation, quality ≥ spec)
+  batch_size: 8
+
+# --- MSST: model ---
+model: htdemucs
+
+gugak_mix:
+  # class scheme: publisher's 9, pitched percussion (편종·편경·방향) quarantined —
+  # excluded from training entirely, NOT folded back into 타악기. Order = output slots.
+  classes: [가야금, 거문고, 기타, 대금, 아쟁, 양금, 타악기, 피리, 해금]
+
+  # [exp002] manifest v2 — 16 publisher-defective rows removed (0714's three
+  # mix-carrying stems + all of 0885, which is 0886 looped 7×). v1 is untouched on disk
+  # as exp001's record. → docs/manifest_v2_provenance.md, configs/manifest_exclusions.yaml
+  source_manifest: manifests/parquet/source_manifest_v2.parquet
+
+  # source pool: ensemble only — 71470 solo pool parked (scope decision 2026-08-03)
+  datasets: ["71955"]
+  split: train
+
+  # excerpt geometry: the checkpoint's native training length
+  segment_seconds: 10.0
+  sample_rate: 44100
+
+  # [exp002] density: n uniform over 1..9 rather than drawn from the measured
+  # audible-편성 distribution. We cannot justify matching real data when class IDENTITY
+  # is already uniform — the realism was half-hearted either way (prof, 2026-08-03).
+  # The measured path is PARKED, not deleted: set density_mode: measured to restore it.
+  density_mode: uniform
+  density_chunk_len_s: 10.0         # inert under uniform (measured-mode inputs, kept so
+  density_coverage_threshold: 0.25  # switching modes needs no other edit; the SAME 0.25
+                                    # coverage test defines "audible" for cluster
+                                    # eligibility — one definition project-wide)
+  # [exp004] n ~ U{2..9}, not exp002's U{1..9}: n=1 mixes teach the trivial identity
+  # mapping and cannot carry a cluster (prof 2026-08-10). Verified support exactly 2–9.
+  density_uniform_min: 2
+
+  # live augmentations. EQ stays OFF: exp002 is the anchor later runs compare against,
+  # so it must not carry an augmentation the comparison would want to isolate.
+  gain_min: 0.25                    # per-stem random gain KEPT, incl. inside clusters
+  gain_max: 1.25                    # (cluster_shared_gain false — see below)
+  channel_swap_prob: 0.5            # same probability; per stem for incoherent stems,
+                                    # ONE shared decision per cluster (below)
+  eq_stem_prob: 0.0
+  eq_mixbus_prob: 0.0
+
+  # mixture normalization: loudnorm mixture+targets by one shared gain to the
+  # dataset-native loudness, then peak-guard
+  target_lufs: -19.0
+  peak_ceiling: 0.99
+
+  # loudness_match is deliberately ABSENT — it re-levels solo-pool stems onto the
+  # ensemble distribution, and there is no solo pool in this run.
+
+  seed: 45                      # [exp004] all three seed surfaces at 45 (see header);
+                                # exp002 = 42, exp002.1 = 43, exp002.3 = 44, exp002.4 = 45.
+                                # Reuses exp002.4's seed-45 head init.
+
+  # [exp004] COHERENT MIXING — the experiment. p = E[coherent stems]/n, read per draw.
+  # Density n and class set S are drawn BEFORE p is consulted (exposure flat, gate G1);
+  # p then decides how many members of S are grouped into clusters (one song, one shared
+  # offset each), the rest stay incoherent. 1.0 = maximum dose; under `uniform` this is
+  # 2–3 real unison clusters per mix mixed incoherently against each other, NOT one song
+  # per mix (that was exp002.2's song-first draw, which no longer exists).
+  coherent_mix_prob: 1.0
+  # [exp010] THE EXPERIMENT — item-grain coin: each mix is planned at p=1.0 with
+  # probability 0.5, else at p=0 (fully incoherent). One coin per mix, first in its stream.
+  coherent_item_ratio: 0.5
+  # [exp004] anchor songs drawn UNIFORMLY over eligible anchors, loop until filled —
+  # many small real pairings (판소리 28% / 창작국악 / 풍류 of clusters; 산조 structurally
+  # 0 under the melodic-pair rule). `greedy` = exp002.2-like single full ensembles.
+  anchor_selection: uniform
+  # [exp004] a cluster must hold ≥ 2 NON-PERCUSSION classes (resolved from the taxonomy's
+  # `pitched` field, never from names): {타악기, one melody} is a drum over a single line,
+  # not heterophonic unison. 타악기 may join a cluster as 3rd+ member only. Gate G5.
+  cluster_min_melodic: 2
+  # [exp004] ONE L/R swap decision per cluster (members inherit) — swapping a real
+  # ensemble's stems independently would scramble its spatial image. This is the
+  # sampler default, written explicitly so the declared config is the config that runs.
+  cluster_shared_channel_swap: true
+  # [exp004] per-stem random gain INSIDE clusters (default false). true = one gain per
+  # cluster, preserving the anchor's real balance — ⚠️ open design decision, deferred;
+  # written explicitly for the same reason as above. Do not flip without an experiment.
+  cluster_shared_gain: false
+
+  # --- reserved knobs (designed, not implemented — enabling raises) ---
+  multi_sample: {}              # 타악-2× seam, e.g. {타악기: 2}
+  pitch_pool_manifest: null     # (source × semitone) pool table, still deferred
+  draw_unit: file               # 'song_base' = summed same-base stems, reserved
+
+# Σstem eval variant (val/test), rendered by src/data/build_sumstem_eval.py in the
+# MSST-native layout (<song>/mixture.flac + <song>/<class>.flac). Classes come from
+# gugak_mix.classes above — train and eval cannot drift. Lives on dataset NVMe.
+# The existing render is reused unchanged: every excluded file is in the TRAIN split,
+# so v1 and v2 describe the val split identically.
+sumstem_eval:
+  out_root: data/gugak_ensemble_71955/sumstem_9stem
+  extension: flac
+  subtype: PCM_24
+
+# --- MSST: HTDemucs architecture — copied VERBATIM from the msst musdb18 template
+# (configs/config_musdb18_htdemucs.yaml @ fork 65266a2). Must match the official
+# pretrained checkpoint's hyperparameters or trunk weights won't transfer. ---
+htdemucs:
+  channels: 48
+  channels_time:
+  growth: 2
+  num_subbands: 1
+  nfft: 4096
+  wiener_iters: 0
+  end_iters: 0
+  wiener_residual: false
+  cac: true
+  depth: 4
+  rewrite: true
+  multi_freqs: []
+  multi_freqs_depth: 3
+  freq_emb: 0.2
+  emb_scale: 10
+  emb_smooth: true
+  kernel_size: 8
+  stride: 4
+  time_stride: 2
+  context: 1
+  context_enc: 0
+  norm_starts: 4
+  norm_groups: 4
+  dconv_mode: 3
+  dconv_depth: 2
+  dconv_comp: 8
+  dconv_init: 1e-3
+  bottom_channels: 512
+  t_layers: 5
+  t_hidden_scale: 4.0
+  t_heads: 8
+  t_dropout: 0.0
+  t_layer_scale: True
+  t_gelu: True
+  t_emb: sin
+  t_max_positions: 10000
+  t_max_period: 10000.0
+  t_weight_pos_embed: 1.0
+  t_cape_mean_normalize: True
+  t_cape_augment: True
+  t_cape_glob_loc_scale: [5000.0, 1.0, 1.4]
+  t_sin_random_shift: 0
+  t_norm_in: True
+  t_norm_in_group: False
+  t_group_norm: False
+  t_norm_first: True
+  t_norm_out: True
+  t_weight_decay: 0.0
+  t_lr:
+  t_sparse_self_attn: False
+  t_sparse_cross_attn: False
+  t_mask_type: diag
+  t_mask_random_seed: 42
+  t_sparse_attn_window: 400
+  t_global_window: 100
+  t_sparsity: 0.95
+  t_auto_sparsity: False
+  t_cross_first: False
+  rescale: 0.1
