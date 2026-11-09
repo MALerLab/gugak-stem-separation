@@ -4,8 +4,6 @@
 # Same settings as plot_training_curves.yaml except run list, max_epoch, output and titles.
 # Curves stop at epoch index 34 (= the 35-epoch budget); exp006/exp008 histories include
 # their continued-to-60 epochs, which max_epoch cuts.
-# ⚠ exp009 lives in the gugak-exp009 worktree until its branch merges → swap its two
-# paths to experiments/… and configs/… then.
 # Colours: high-contrast trio instead of dancheong slots 1–3 (green/blue/olive read as one
 # hue). Validated 2026-11-04 with the dataviz validate_palette.js, light mode, all pairs:
 # pass; aqua is 2.74:1 on the surface → relieved by the legend naming every line.
@@ -19,9 +17,8 @@ runs:
     config_path: configs/exp006_bsroformer_partial_coherent.yaml
     color: "#1baf7a"               # aqua
   - label: exp009 p=1
-    experiment_dir: ../gugak-exp009/experiments/exp009_261103_bsroformer_partial_coherent_p1
-    config_path: ../gugak-exp009/configs/exp009_bsroformer_partial_coherent_p1.yaml
-    status: running
+    experiment_dir: experiments/exp009_261103_bsroformer_partial_coherent_p1
+    config_path: configs/exp009_bsroformer_partial_coherent_p1.yaml
     color: "#eb6834"               # orange
 
 settings:
