@@ -121,6 +121,9 @@ Post-ingest silence is **not** bit-exact zero. DC removal leaves a ±1-LSB resid
   the residue differs per file. Group silence by level, never by hash.
 
 ## Repo conventions
+- **Repo map:** `WHERE.md` (untracked, repo root) — what lives where + one-line run index.
+  Read it before answering "what ran / where is X". New runs can sit in a worktree
+  (`git worktree list`) or only in `~/storage/gugak-stemsep-experiments/` until merged.
 - **Experiment configs:** one per experiment (`configs/*.yaml`) = one wandb run; change
   configs, not code, for hyperparameter variation. Shared/cross-experiment configs
   (e.g. `configs/stem_taxonomy.yaml`) also live in `configs/`; split
