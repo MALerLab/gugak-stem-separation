@@ -1,0 +1,11 @@
+65261d11c28adc6a8c89b59f3ed0c4237827db70
+ M scripts/bench_compile.py
+ M src/data/mix_dataset.py
+?? configs/exp010_htdemucs_coinflip_r05.yaml
+?? configs/exp011_htdemucs_coinflip_r025.yaml
+?? configs/exp012_htdemucs_coinflip_r075.yaml
+?? experiments/exp010_261103_htdemucs_coinflip_r05/
+?? experiments/exp011_261103_htdemucs_coinflip_r025/
+?? experiments/exp012_261103_htdemucs_coinflip_r075/
+?? experiments/run_queue_coinflip.sh
+31110ff54b7af035a096c17289d41dc722cea9d4

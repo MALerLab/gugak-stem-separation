@@ -87,9 +87,9 @@ def patch_attention_to_modern_sdpa() -> int:
     return 1
 
 
-def build(config_path: str, device: torch.device):
-    """Construct the configured BS-RoFormer on `device`, in train mode."""
-    model, config = get_model_from_config("bs_roformer", config_path)
+def build(model_type: str, config_path: str, device: torch.device):
+    """Construct the configured model on `device`, in train mode."""
+    model, config = get_model_from_config(model_type, config_path)
     model = model.to(device)
     model.train()
     return model, config
@@ -136,6 +136,9 @@ def run_variant(name: str, model, x: torch.Tensor, y: torch.Tensor,
 def main() -> None:
     ap = argparse.ArgumentParser(description="torch.compile benchmark for BS-RoFormer.")
     ap.add_argument("--config", required=True)
+    ap.add_argument("--model-type", default="bs_roformer",
+                    help="MSST model_type (htdemucs for exp010; compile_sdpa is "
+                         "BS-RoFormer-only)")
     ap.add_argument("--steps", type=int, default=12, help="timed steps per variant")
     ap.add_argument("--warmup", type=int, default=5, help="untimed steps (compile lands here)")
     ap.add_argument("--variants", default="eager,compile,compile_sdpa")
@@ -150,16 +153,16 @@ def main() -> None:
     print(f"device       : {torch.cuda.get_device_name(0)}")
     print(f"torch        : {torch.__version__}  cuda {torch.version.cuda}")
 
-    _, config = get_model_from_config("bs_roformer", args.config)
+    _, config = get_model_from_config(args.model_type, args.config)
     tr = config.training
     amp_dtype = {"float16": torch.float16, "bfloat16": torch.bfloat16}[
         str(getattr(tr, "amp_dtype", "bfloat16"))
     ]
     batch = int(args.batch) if args.batch else int(tr.batch_size)
     chunk = int(config.audio.chunk_size)
-    n_stems = int(config.model.num_stems)
+    n_stems = len(tr.instruments)   # model.num_stems is BS-RoFormer-only
     print(f"geometry     : batch {batch} x 2ch x {chunk} samples "
-          f"({chunk / config.audio.sample_rate:.1f} s), {n_stems} stems, amp={amp_dtype}")
+          f"({chunk / int(tr.samplerate):.1f} s), {n_stems} stems, amp={amp_dtype}")
     print(f"accum        : {getattr(tr, 'gradient_accumulation_steps', 1)} "
           f"(effective batch {batch * int(getattr(tr, 'gradient_accumulation_steps', 1))})")
 
@@ -176,7 +179,7 @@ def main() -> None:
             n = patch_attention_to_modern_sdpa()
             print(f"    patched Attend.flash_attn -> torch.nn.attention.sdpa_kernel ({n})")
 
-        model, _ = build(args.config, device)
+        model, _ = build(args.model_type, args.config, device)
         if variant.startswith("compile"):
             t0 = time.perf_counter()
             model = torch.compile(model)

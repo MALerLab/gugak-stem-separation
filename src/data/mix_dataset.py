@@ -4,6 +4,12 @@ One sampler, one knob: `coherent_mix_prob` (p) sets HOW MUCH of each mix is cohe
 0.0 = fully incoherent (exp002 and everything before it), 1.0 = every drawable stem
 coherent, values between interpolate at stem grain rather than item grain.
 
+`coherent_item_ratio` (r, optional) is the ITEM-grain alternative (prof's per-batch idea,
+2026-08-18; LBD Q&A mixer test, exp010): each mix flips one coin first — with probability
+r it is planned at p = coherent_mix_prob, otherwise at p = 0 (fully incoherent). Unset, or
+r ∈ {0, 1}, draws no coin, so every config that predates it is bit-identical and r = 1
+reproduces exp004 exactly.
+
 THE DRAW ORDER IS THE DESIGN. exp002.2 drew the song first, so density and class
 identity followed real 편성 — realised density fell 5.00 → 3.24 and rare-class exposure
 collapsed (양금 0.10×). Coherence and exposure moved together, and the run's collapse
@@ -144,6 +150,11 @@ class MixDatasetConfig:
     # to a run that predates this feature). Read PER DRAW, never cached, so a curriculum
     # module may mutate it between steps.
     coherent_mix_prob: float = 0.0
+    # item-grain coherence — r, the probability a mix is planned at coherent_mix_prob at
+    # all (else at p=0, fully incoherent). None (default) = no coin, the stem-grain
+    # sampler unchanged. One coin per mix, drawn FIRST in the item's stream, and only for
+    # 0 < r < 1 (→ module docstring).
+    coherent_item_ratio: float | None = None
     # how the fill loop picks anchor songs (→ module docstring):
     #   "greedy"           single anchor, maximum overlap with the unfilled classes,
     #                      shortfall accepted (Method A)
@@ -452,6 +463,10 @@ class GugakMixDataset(torch.utils.data.Dataset):
         """Value checks + reserved-key guard (reserved keys fail loudly, never no-op)."""
         if not 0.0 <= cfg.coherent_mix_prob <= 1.0:
             raise ValueError(f"coherent_mix_prob={cfg.coherent_mix_prob}: expected [0, 1]")
+        if (cfg.coherent_item_ratio is not None
+                and not 0.0 <= cfg.coherent_item_ratio <= 1.0):
+            raise ValueError(f"coherent_item_ratio={cfg.coherent_item_ratio}: expected "
+                             f"[0, 1] or null")
         if cfg.anchor_selection not in ANCHOR_SELECTION_MODES:
             raise ValueError(f"anchor_selection={cfg.anchor_selection!r}: expected one "
                              f"of {ANCHOR_SELECTION_MODES}")
@@ -1206,6 +1221,12 @@ class GugakMixDataset(torch.utils.data.Dataset):
         reimplementation of it.
         """
         p = float(self.cfg.coherent_mix_prob)   # per-draw read — the curriculum seam
+        r = self.cfg.coherent_item_ratio
+        if r is not None:
+            if r <= 0.0:
+                p = 0.0
+            elif r < 1.0 and rng.random() >= r:   # the item-grain coin (0 < r < 1 only)
+                p = 0.0
         n = int(rng.choice(self.density_values, p=self.density_probs))
         drawn = rng.choice(len(self.cfg.classes), size=n, replace=False)
 
